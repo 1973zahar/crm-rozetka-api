@@ -23,7 +23,7 @@ echo.
 echo =========================
 echo Push to GitHub
 echo =========================
-git push --set-upstream origin main
+git push -u origin main --force
 
 echo.
 echo =========================
