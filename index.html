@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Arms CRM</title>
+    <link rel="stylesheet" href="styles.css?v=20260525-rozetka-full-api-5">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Головна навігація">
+        <div class="brand">
+          <span class="brand-mark">AC</span>
+          <div class="brand-text">
+            <strong>Arms CRM</strong>
+            <small>торгівля та облік</small>
+          </div>
+          <button class="sidebar-toggle" id="sidebar-toggle" type="button" title="Згорнути меню" aria-label="Згорнути меню" aria-expanded="true">☰</button>
+        </div>
+
+        <nav class="nav" id="nav"></nav>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Операційна CRM для цивільної зброї та аксесуарів</p>
+            <h1 id="page-title">Панель</h1>
+          </div>
+          <div class="toolbar">
+            <label class="field compact">
+              <span>Роль</span>
+              <select id="role-select" disabled></select>
+            </label>
+            <label class="field compact">
+              <span>Працівник</span>
+              <select id="manager-select"></select>
+            </label>
+            <button class="icon-button" id="export-json" title="Експорт JSON" aria-label="Експорт JSON">⇩</button>
+            <button class="icon-button danger" id="reset-demo" title="Скинути demo-дані" aria-label="Скинути demo-дані">↻</button>
+          </div>
+        </header>
+
+        <main id="app" class="content" tabindex="-1"></main>
+      </div>
+    </div>
+
+    <template id="modal-template">
+      <div class="modal-backdrop" role="dialog" aria-modal="true">
+        <div class="modal">
+          <div class="modal-head">
+            <h2></h2>
+            <button class="icon-button" data-close-modal title="Закрити" aria-label="Закрити">×</button>
+          </div>
+          <div class="modal-body"></div>
+        </div>
+      </div>
+    </template>
+
+    <script src="app.js?v=20260525-b2b-storage-dropdown-search-sort"></script>
+  </body>
+</html>
