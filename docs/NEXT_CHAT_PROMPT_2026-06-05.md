@@ -12,6 +12,9 @@ D:\Codex\CRM\marketplace-crm\docs\HANDOFF_2026-06-05_MARKETPLACE_CRM.md
 Work log:
 D:\Codex\CRM\SQL\docs\crm-sql-work-log-2026-06-01.md
 
+Repo-safe log export:
+D:\Codex\CRM\marketplace-crm\docs\WORK_LOG_EXPORT_2026-06-05.md
+
 Обов'язково:
 - всі вдалі та провальні дії писати в work log;
 - кожну помилку фіксувати з кодом;

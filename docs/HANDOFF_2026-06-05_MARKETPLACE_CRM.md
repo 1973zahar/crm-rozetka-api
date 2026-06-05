@@ -7,6 +7,8 @@
 - Current build: `v2026.06.05.2`, `20260605-full-history-np-npay-1`
 - Prototype port: `8789`
 - LAN URL used in the last verification: `http://192.168.4.14:8789/index.html?build=20260605-full-history-np-npay-1`
+- Repo-safe log export: `docs/WORK_LOG_EXPORT_2026-06-05.md`
+- Full local work log: `D:\Codex\CRM\SQL\docs\crm-sql-work-log-2026-06-01.md`
 
 ## Safety rules to keep
 
