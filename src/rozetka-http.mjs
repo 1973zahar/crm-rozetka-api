@@ -1,4 +1,5 @@
 const DEFAULT_BASE_URL = "https://api-seller.rozetka.com.ua";
+const DEFAULT_REQUEST_TIMEOUT_MS = 20000;
 
 main().catch((error) => {
   const payload = {
@@ -59,11 +60,11 @@ async function rozetkaRequest(method, endpoint, { queryString = "", body, auth =
     headers.Authorization = await authorizationHeader();
   }
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body)
-  });
+  }, endpoint);
 
   const responsePayload = await parseJson(response);
   if (!response.ok || responsePayload?.success === false) {
@@ -132,12 +133,12 @@ async function fetchImage(imageUrl) {
     throw new Error("Only Rozetka image URLs are allowed.");
   }
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     headers: {
       Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
       "User-Agent": "Mozilla/5.0 CRM Rozetka Image Proxy"
     }
-  });
+  }, imageUrl);
   if (!response.ok) {
     const error = new Error(`Image request failed with HTTP ${response.status}.`);
     error.status = response.status;
@@ -155,6 +156,24 @@ async function fetchImage(imageUrl) {
 function env(name) {
   const value = process.env[name];
   return value && value.trim() ? value.trim() : "";
+}
+
+async function fetchWithTimeout(url, options = {}, endpoint = "") {
+  const timeoutMs = Number(env("ROZETKA_REQUEST_TIMEOUT_MS")) || DEFAULT_REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error(`Rozetka API request timed out after ${timeoutMs} ms.`);
+      timeoutError.endpoint = endpoint || String(url);
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function writeBase64Json(stream, payload) {

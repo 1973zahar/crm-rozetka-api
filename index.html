@@ -3,41 +3,58 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Arms CRM</title>
-    <link rel="stylesheet" href="styles.css?v=20260525-rozetka-full-api-5">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Marketplace CRM</title>
+    <link rel="stylesheet" href="styles.css?v=20260605-full-history-np-npay-1">
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Головна навігація">
         <div class="brand">
-          <span class="brand-mark">AC</span>
+          <span class="brand-mark">MP</span>
           <div class="brand-text">
-            <strong>Arms CRM</strong>
-            <small>торгівля та облік</small>
+            <strong>Marketplace CRM</strong>
+            <small>замовлення, товари, фінанси, ТТН</small>
           </div>
           <button class="sidebar-toggle" id="sidebar-toggle" type="button" title="Згорнути меню" aria-label="Згорнути меню" aria-expanded="true">☰</button>
         </div>
 
-        <nav class="nav" id="nav"></nav>
+        <nav class="nav" id="nav">
+          <button data-view="dashboard" class="active" title="Панель" aria-label="Панель"><span class="nav-icon">ПН</span><span class="nav-label">Панель</span><span class="nav-count"></span></button>
+          <button data-view="sales" title="Продажі" aria-label="Продажі"><span class="nav-icon">ПР</span><span class="nav-label">Продажі</span><span class="nav-count"></span></button>
+          <button data-view="products" title="Товари" aria-label="Товари"><span class="nav-icon">ТВ</span><span class="nav-label">Товари</span><span class="nav-count"></span></button>
+          <button data-view="reports" title="Аналітика та звіти" aria-label="Аналітика та звіти"><span class="nav-icon">АЗ</span><span class="nav-label">Аналітика та звіти</span><span class="nav-count"></span></button>
+          <button data-view="finance" title="Фінанси" aria-label="Фінанси"><span class="nav-icon">ФН</span><span class="nav-label">Фінанси</span><span class="nav-count"></span></button>
+          <button data-view="settings" title="Налаштування" aria-label="Налаштування"><span class="nav-icon">НЛ</span><span class="nav-label">Налаштування</span><span class="nav-count"></span></button>
+        </nav>
+        <div class="app-version" id="app-version" title="CRM version">
+          <span>Версія</span>
+          <strong>v2026.06.05.2</strong>
+          <small>20260605-full-history-np-npay-1</small>
+          <small>п'ятниця, 2026-06-05</small>
+          <small>час 12:05</small>
+        </div>
       </aside>
 
       <div class="workspace">
         <header class="topbar">
           <div>
-            <p class="eyebrow">Операційна CRM для цивільної зброї та аксесуарів</p>
+            <p class="eyebrow">CRM тільки для маркетплейсів: товари, ціни, залишки, замовлення, фінанси, ТТН та обмін</p>
             <h1 id="page-title">Панель</h1>
           </div>
           <div class="toolbar">
             <label class="field compact">
               <span>Роль</span>
-              <select id="role-select" disabled></select>
+              <select id="role-select" disabled><option>Адміністратор</option></select>
             </label>
             <label class="field compact">
               <span>Працівник</span>
-              <select id="manager-select"></select>
+              <select id="manager-select"><option>Марія Шевчук</option></select>
             </label>
             <button class="icon-button" id="export-json" title="Експорт JSON" aria-label="Експорт JSON">⇩</button>
-            <button class="icon-button danger" id="reset-demo" title="Скинути demo-дані" aria-label="Скинути demo-дані">↻</button>
+            <button class="icon-button danger" id="reset-demo" title="Скинути локальну базу прототипу" aria-label="Скинути локальну базу прототипу">↻</button>
           </div>
         </header>
 
@@ -57,6 +74,6 @@
       </div>
     </template>
 
-    <script src="app.js?v=20260525-b2b-storage-dropdown-search-sort"></script>
+    <script src="app.js?v=20260605-full-history-np-npay-1"></script>
   </body>
 </html>

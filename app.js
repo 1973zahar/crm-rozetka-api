@@ -1,23 +1,108 @@
 "use strict";
 
-const STORAGE_KEY = "arms-crm-v1";
+const STORAGE_KEY = "marketplace-crm-v1";
+const APP_VERSION = "2026.06.05.2";
+const APP_BUILD = "20260605-full-history-np-npay-1";
+const APP_BUILD_DATE = "2026-06-05";
+const APP_BUILD_DAY = "п'ятниця";
+const APP_BUILD_TIME = "12:05";
+const CLIENT_LOG_ENDPOINT = "/api/log/client-action";
+
+function createSafeStorage(storageName) {
+  const memory = new Map();
+  try {
+    const storage = window[storageName];
+    const testKey = `__crm_storage_test_${Date.now()}`;
+    storage.setItem(testKey, "1");
+    storage.removeItem(testKey);
+    return storage;
+  } catch (error) {
+    return {
+      getItem(key) {
+        return memory.has(key) ? memory.get(key) : null;
+      },
+      setItem(key, value) {
+        memory.set(key, String(value));
+      },
+      removeItem(key) {
+        memory.delete(key);
+      }
+    };
+  }
+}
+
+const appLocalStorage = createSafeStorage("localStorage");
+const appSessionStorage = createSafeStorage("sessionStorage");
 
 const NAV = [
   ["dashboard", "Панель", "ПН"],
   ["sales", "Продажі", "ПР"],
   ["products", "Товари", "ТВ"],
-  ["purchases", "Прихід", "ПХ"],
-  ["serials", "Серії / ЄРЗ", "ЄР"],
-  ["warehouse", "Склад", "СК"],
-  ["b2b", "B2B кабінети", "B2"],
-  ["clients", "Клієнти", "КЛ"],
+  ["reports", "Аналітика та звіти", "АЗ"],
   ["finance", "Фінанси", "ФН"],
-  ["reports", "Звіти", "ЗВ"],
-  ["marketplaces", "Маркетплейси", "МП"],
-  ["integrations", "Інтеграції", "ІН"],
-  ["settings", "Налаштування", "НЛ"],
-  ["roles", "Ролі", "РЛ"]
+  ["settings", "Налаштування", "НЛ"]
 ];
+
+const SUBVIEWS = {
+  sales: [
+    ["orders", "Замовлення"],
+    ["warehouse", "Склад"],
+    ["logistics", "Логістика"],
+    ["clients", "Клієнти"],
+    ["communication", "Комунікація"]
+  ],
+  products: [
+    ["catalog", "Каталог"],
+    ["stock", "Залишки на складі"],
+    ["publications", "Публікації"]
+  ],
+  finance: [
+    ["payments", "Оплати за замовлення"],
+    ["settlements", "Розрахунки із маркетплейсами"]
+  ],
+  settings: [
+    ["dataExchange", "Обмін даними"],
+    ["logistics", "Логістика"],
+    ["communicators", "Комунікатори та зв'язок"],
+    ["funnels", "Воронки"],
+    ["team", "Команда"],
+    ["roles", "Ролі"],
+    ["logFile", "Лог файл"]
+  ]
+};
+
+const ROLE_SUBVIEW_PERMISSIONS = Object.entries(SUBVIEWS).flatMap(([viewId, items]) => {
+  const viewLabel = NAV.find(([id]) => id === viewId)?.[1] || viewId;
+  return items.map(([subviewId, label]) => [`${viewId}:${subviewId}`, `${viewLabel} / ${label}`]);
+});
+
+const SUBVIEW_SECTION_PREFIXES = {
+  sales: {
+    orders: ["2.1", "Імпортовані замовлення"],
+    warehouse: ["2.2"],
+    logistics: ["2.3"],
+    clients: ["2.4"],
+    communication: ["2.5"]
+  },
+  products: {
+    catalog: ["3.1"],
+    stock: ["3.2"],
+    publications: ["3.3"]
+  },
+  finance: {
+    payments: ["5.1"],
+    settlements: ["5.2"]
+  },
+  settings: {
+    dataExchange: ["6.1", "Обмін даними", "Підключені маркетплейси"],
+    logistics: ["6.2"],
+    communicators: ["6.3"],
+    funnels: ["6.4"],
+    team: ["6.5"],
+    roles: ["6.6"],
+    logFile: ["6.7"]
+  }
+};
 
 const VARIANT_DICTIONARY_DEFINITIONS = [
   { key: "documentTypes", label: "Типи документів", legacyKey: "documentTypes" },
@@ -31,7 +116,6 @@ const VARIANT_DICTIONARY_DEFINITIONS = [
   { key: "clientTypes", label: "Типи клієнтів" },
   { key: "taxModes", label: "Податкові режими" },
   { key: "financeMethods", label: "Методи витрат" },
-  { key: "b2bReportSources", label: "Джерела B2B звіту" },
   { key: "cashArticles", label: "Статті руху коштів", legacyKey: "cashArticles" },
   { key: "expenseArticles", label: "Статті витрат", legacyKey: "expenseArticles" },
   { key: "warehouseKinds", label: "Типи складів" }
@@ -48,7 +132,7 @@ const CATALOG_PARAMETER_DEFINITIONS = [
 const DEFAULT_VARIANT_DICTIONARIES = {
   documentTypes: ["Рахунок", "Видаткова накладна", "Реалізація", "Акт відповідального зберігання", "Повернення", "Переміщення"],
   purchaseDocumentTypes: ["Прибуткова накладна", "Імпорт BAS/BAF", "Акт приймання", "Коригування приходу"],
-  salesChannels: ["Магазин", "Сайт", "Rozetka", "Prom", "Epicentr", "Allo", "B2B"],
+  salesChannels: ["Магазин", "Rozetka", "Prom", "Epicentr", "Allo"],
   delivery: ["Нова пошта", "Укрпошта", "Міст", "Спецзв'язок Укрпошти"],
   deliveryPayers: ["Клієнт", "Компанія", "Маркетплейс"],
   paymentModes: ["Оплачено", "Попередня оплата часткова", "Відтермінування"],
@@ -59,14 +143,12 @@ const DEFAULT_VARIANT_DICTIONARIES = {
   ],
   paymentTerms: ["Попередня оплата", "Відтермінування 7 днів", "Відтермінування 14 днів", "Відтермінування 30 днів", "Оплата при продажу"],
   clientTypes: [
-    { id: "client-type-b2b", name: "B2B", value: "B2B" },
     { id: "client-type-retail", name: "Роздріб", value: "Retail" },
     { id: "client-type-marketplace", name: "Маркетплейс", value: "Marketplace" }
   ],
   taxModes: ["ПДВ", "без ПДВ", "роздріб"],
   financeMethods: ["Каса", "Безготівка", "Банк API", "Конвертація"],
-  b2bReportSources: ["Кабінет клієнта", "Звіт клієнта менеджеру", "Імпорт файлу"],
-  cashArticles: ["Продаж товарів", "Передоплата B2B", "Повернення коштів", "Конвертація валюти", "Інкасація"],
+  cashArticles: ["Продаж товарів", "Передоплата маркетплейсу", "Повернення коштів", "Конвертація валюти", "Інкасація"],
   expenseArticles: ["Комісія маркетплейсу", "Логістика", "Оренда", "Зарплата", "Банківська комісія", "Закупівля товару"],
   warehouseKinds: [
     { id: "warehouse-own", name: "Основний", value: "own" },
@@ -86,7 +168,185 @@ const DEFAULT_CATALOG_PARAMETERS = {
   catalogTags: ["Акція", "Розпродаж"]
 };
 
-const today = "2026-05-23";
+const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Kyiv" });
+
+const DEFAULT_SALES_FUNNEL = [
+  { id: "new_order", label: "Нове замовлення", className: "marketplace-new", slaHours: 1, reminder: "Прийняти замовлення з маркетплейсу і призначити менеджера.", active: true },
+  { id: "in_progress", label: "В роботі", className: "marketplace-progress", slaHours: 1, reminder: "Відкрити картку, перевірити товар, клієнта, оплату і доставку.", active: true },
+  { id: "waiting_client", label: "Очікує підтвердження клієнта", className: "marketplace-waiting", slaHours: 2, reminder: "Повторно зателефонувати або написати клієнту для підтвердження.", active: true },
+  { id: "confirmed_by_client", label: "Підтверджено клієнтом", className: "marketplace-confirmed", slaHours: 2, reminder: "Зафіксувати підтвердження, адресу, оплату і склад замовлення.", active: true },
+  { id: "upsell", label: "Апсел / крос-сел", className: "marketplace-upsell", slaHours: 4, reminder: "Запропонувати додаткові товари, комплект або витратні матеріали.", active: true },
+  { id: "waiting_payment", label: "Очікує оплату", className: "marketplace-payment-waiting", slaHours: 24, reminder: "Перевірити оплату і нагадати покупцю, якщо потрібно.", active: true },
+  { id: "paid", label: "Оплачено", className: "marketplace-paid", slaHours: 2, reminder: "Звірити оплату і передати замовлення на комплектацію.", active: true },
+  { id: "picking", label: "На комплектації", className: "marketplace-warehouse", slaHours: 4, reminder: "Склад має зарезервувати і зібрати товар.", active: true },
+  { id: "picked", label: "Зібрано", className: "marketplace-picked", slaHours: 4, reminder: "Перевірити зібране замовлення і підготувати ТТН.", active: true },
+  { id: "shipped", label: "Відправлено", className: "marketplace-delivery", slaHours: 24, reminder: "Перевірити ТТН, рух посилки і повідомити покупця.", active: true },
+  { id: "delivered", label: "Доставлено", className: "marketplace-delivered", slaHours: 24, reminder: "Підтвердити доставку і якість контакту.", active: true },
+  { id: "completed", label: "Завершено", className: "marketplace-completed", slaHours: 24, reminder: "Закрити продаж і підготувати післяпродажний контакт.", active: true },
+  { id: "follow_up", label: "Follow-up", className: "marketplace-aftersale", slaHours: 72, reminder: "Зв'язатися після отримання: відгук, гарантія, сервіс.", active: true },
+  { id: "repeat_sale", label: "Повторний продаж", className: "marketplace-repeat", slaHours: 168, reminder: "Перевести клієнта у повторну воронку і підготувати пропозицію.", active: true },
+  { id: "cancelled", label: "Скасовано", className: "marketplace-cancelled", slaHours: 1, reminder: "Зафіксувати причину скасування і закрити активні дії.", active: true }
+];
+
+const MARKETPLACE_ORDER_STATUSES = DEFAULT_SALES_FUNNEL.map(({ id, label, className }) => ({ id, label, className }));
+const MARKETPLACE_ORDER_STATUS_MAP = Object.fromEntries(MARKETPLACE_ORDER_STATUSES.map((item) => [item.id, item]));
+const SALES_FUNNEL_DESCRIPTIONS = {
+  new_order: "Замовлення прийшло з маркетплейсу",
+  in_progress: "Менеджер відкрив і почав обробку",
+  waiting_client: "Менеджер не додзвонився / очікує відповідь",
+  confirmed_by_client: "Клієнт підтвердив замовлення",
+  upsell: "Менеджер пропонує додаткові товари",
+  waiting_payment: "Замовлення підтверджене, але не оплачене",
+  paid: "Оплата отримана",
+  picking: "Передано на склад",
+  picked: "Склад підтвердив комплектацію",
+  shipped: "Створена ТТН",
+  delivered: "Замовлення доставлене клієнту",
+  completed: "Продаж закрито",
+  follow_up: "Післяпродажний контакт",
+  repeat_sale: "Клієнт переведений у повторну воронку",
+  cancelled: "Замовлення скасоване"
+};
+const SALES_FUNNEL_WORKFLOW_RULES = {
+  new_order: {
+    menuLocation: "Панель → картка статусу; Продажі → Замовлення",
+    entryCondition: "Замовлення імпортоване з маркетплейсу або створене вручну в CRM; є номер замовлення, покупець і товар.",
+    completionCondition: "CRM створила або оновила клієнта, призначила менеджера і підготувала замовлення до обробки.",
+    switchBy: "Автоматично при імпорті/створенні або кнопкою «Авто». Далі переходить у «В роботі» після відкриття картки замовлення менеджером."
+  },
+  in_progress: {
+    menuLocation: "Продажі → Замовлення; картка замовлення",
+    entryCondition: "Менеджер відкрив нове замовлення або взяв його в роботу.",
+    completionCondition: "Перевірені покупець, товар, кількість, ціна, спосіб оплати і доставка; визначено наступну дію.",
+    switchBy: "Автоматично при відкритті картки нового замовлення; далі кнопками «Очікує клієнта» або «Підтверджено»."
+  },
+  waiting_client: {
+    menuLocation: "Продажі → Замовлення; комунікація по замовленню",
+    entryCondition: "Менеджер не додзвонився, покупець не відповів або треба дочекатися уточнення.",
+    completionCondition: "Є відповідь покупця: підтвердження, відмова або уточнені дані доставки/оплати.",
+    switchBy: "Кнопка «Очікує клієнта», повідомлення/дзвінок менеджера або вибір статусу у формі замовлення."
+  },
+  confirmed_by_client: {
+    menuLocation: "Продажі → Замовлення; картка клієнта",
+    entryCondition: "Покупець підтвердив замовлення, контакти і доставку.",
+    completionCondition: "Клієнт створений у CRM, товар і спосіб оплати узгоджені.",
+    switchBy: "Кнопка «Підтверджено» або вибір статусу у формі замовлення."
+  },
+  upsell: {
+    menuLocation: "Продажі → Замовлення; комунікація з покупцем",
+    entryCondition: "Замовлення підтверджене клієнтом; менеджер може запропонувати супутні товари.",
+    completionCondition: "Апсел запропоновано і зафіксовано результат: додано товар, відмова або без змін.",
+    switchBy: "Кнопка «Апсел» або вибір статусу у формі замовлення."
+  },
+  waiting_payment: {
+    menuLocation: "Продажі → Замовлення; Фінанси → Оплати за замовлення",
+    entryCondition: "Замовлення підтверджене, але оплата ще не отримана або потребує перевірки.",
+    completionCondition: "Оплата підтверджена маркетплейсом, банком, післяплатою або менеджером.",
+    switchBy: "Кнопка «Очікує оплату», API оплати або вибір статусу у формі замовлення."
+  },
+  paid: {
+    menuLocation: "Продажі → Замовлення; Фінанси → Оплати за замовлення",
+    entryCondition: "Оплата отримана або підтверджена API/банком/післяплатою.",
+    completionCondition: "Оплата звірена з сумою замовлення; можна передавати на склад.",
+    switchBy: "Кнопка «Оплата», API оплати або статус оплати «оплачено» у формі замовлення."
+  },
+  picking: {
+    menuLocation: "Продажі → Замовлення; Продажі → Логістика; Товари → Залишки",
+    entryCondition: "Клієнт підтвердив замовлення; товар доступний або створена накладна/резерв.",
+    completionCondition: "Склад прийняв завдання, зарезервував товар і почав комплектацію.",
+    switchBy: "Кнопка «Комплектація» або створення накладної з замовлення."
+  },
+  picked: {
+    menuLocation: "Продажі → Логістика; картка замовлення",
+    entryCondition: "Замовлення передано на комплектацію і склад має товар для відвантаження.",
+    completionCondition: "Склад підтвердив, що товар зібрано і готовий до відправки.",
+    switchBy: "Кнопка «Зібрано»."
+  },
+  shipped: {
+    menuLocation: "Продажі → Логістика; картка замовлення",
+    entryCondition: "Замовлення зібрано; внесено або створено ТТН.",
+    completionCondition: "Посилка передана перевізнику, ТТН записана в CRM.",
+    switchBy: "Кнопка «Відправлено» або API логістики."
+  },
+  delivered: {
+    menuLocation: "Продажі → Логістика; картка замовлення",
+    entryCondition: "Перевізник або менеджер підтвердив вручення/доставку.",
+    completionCondition: "Доставка зафіксована, немає відкритих проблем по отриманню.",
+    switchBy: "Кнопка «Доставлено» / «Відстежити доставку» або API логістики."
+  },
+  completed: {
+    menuLocation: "Продажі → Замовлення; Панель → воронка",
+    entryCondition: "Замовлення доставлено клієнту.",
+    completionCondition: "Продаж закрито, документи і оплата звірені, наступна дія — післяпродажний контакт.",
+    switchBy: "Кнопка «Завершено»."
+  },
+  follow_up: {
+    menuLocation: "Продажі → Комунікація; Панель → воронка",
+    entryCondition: "Продаж завершено; настав час післяпродажного контакту.",
+    completionCondition: "Покупцю написали або зателефонували: відгук, гарантія, сервіс, додаткові потреби.",
+    switchBy: "Кнопка «Follow-up» або зафіксована комунікація менеджера."
+  },
+  repeat_sale: {
+    menuLocation: "Продажі → Комунікація; Аналітика та звіти → повторні продажі",
+    entryCondition: "Післяпродажний контакт виконано і є потенціал повторної покупки.",
+    completionCondition: "Клієнт переведений у повторну воронку або створено нову пропозицію/замовлення.",
+    switchBy: "Кнопка «Повтор»."
+  },
+  cancelled: {
+    menuLocation: "Продажі → Замовлення; Панель → воронка",
+    entryCondition: "Клієнт, маркетплейс або менеджер скасував замовлення; або неможливо виконати оплату/склад/доставку.",
+    completionCondition: "Причину скасування зафіксовано, резерви складу/документи/оплати перевірені.",
+    switchBy: "Кнопка «Скасовано» або вибір статусу у формі замовлення."
+  }
+};
+const SALES_FUNNEL_CLASS_OPTIONS = [
+  ["marketplace-new", "жовтий / новий"],
+  ["marketplace-progress", "синій / в роботі"],
+  ["marketplace-waiting", "помаранчевий / очікування"],
+  ["marketplace-confirmed", "фіолетовий / підтверджено"],
+  ["marketplace-upsell", "індиго / апсел"],
+  ["marketplace-payment-waiting", "бурштин / оплата"],
+  ["marketplace-paid", "зелений / оплачено"],
+  ["marketplace-warehouse", "бірюзовий / склад"],
+  ["marketplace-picked", "зелений / зібрано"],
+  ["marketplace-delivery", "синій / доставка"],
+  ["marketplace-delivered", "зелений / доставлено"],
+  ["marketplace-completed", "зелений / завершено"],
+  ["marketplace-aftersale", "ціан / follow-up"],
+  ["marketplace-repeat", "пурпурний / повтор"],
+  ["marketplace-cancelled", "червоний / скасовано"]
+];
+const MARKETPLACE_STATUS_ALIASES = {
+  agreed: "confirmed_by_client",
+  sent_to_warehouse: "picking",
+  sent_to_delivery: "shipped",
+  aftersale: "follow_up",
+  invoiced: "picking",
+  payment_expected: "waiting_payment",
+  shipped_to_customer: "shipped",
+  done: "completed",
+  closed: "completed",
+  canceled: "cancelled"
+};
+const MARKETPLACE_FINAL_STATUSES = ["completed", "repeat_sale", "cancelled"];
+
+const NOVAPAY_ERROR_CODES = {
+  emptyTtn: "NPAY_EMPTY_TTN",
+  noOrderByTtn: "NPAY_NO_ORDER_BY_TTN",
+  amountMismatch: "NPAY_AMOUNT_MISMATCH",
+  gatewayError: "NPAY_GATEWAY_ERROR",
+  gatewayNotConfigured: "NPAY_REAL_GATEWAY_NOT_CONFIGURED",
+  directGatewayNotConfigured: "NPAY_DIRECT_GATEWAY_NOT_CONFIGURED",
+  directGatewayFailed: "NPAY_DIRECT_GATEWAY_FAILED",
+  directAuthFailed: "NPAY_DIRECT_AUTH_FAILED",
+  directNoJwt: "NPAY_DIRECT_AUTH_NO_JWT",
+  directNoClients: "NPAY_DIRECT_NO_CLIENTS",
+  directNoAccounts: "NPAY_DIRECT_NO_ACCOUNTS",
+  directPaymentsFailed: "NPAY_DIRECT_PAYMENTS_FAILED",
+  historyPartial: "NPAY_HISTORY_PARTIAL",
+  signatureError: "NPAY_SIGNATURE_ERROR",
+  importParseError: "NPAY_IMPORT_PARSE_ERROR"
+};
 
 const seedState = {
   currentView: "dashboard",
@@ -103,7 +363,7 @@ const seedState = {
     ],
     paymentTerminals: [
       { id: "term-vat-main", name: "POS Monobank · магазин", firmId: "vat", provider: "Mono" },
-      { id: "term-vat-b2b", name: "POS ПриватБанк · B2B", firmId: "vat", provider: "ПриватБанк" },
+      { id: "term-vat-marketplace", name: "POS ПриватБанк · маркетплейс", firmId: "vat", provider: "ПриватБанк" },
       { id: "term-fop-main", name: "POS LiqPay · ФОП", firmId: "fop", provider: "LiqPay" }
     ],
     suppliers: [
@@ -125,9 +385,67 @@ const seedState = {
     catalogParameters: DEFAULT_CATALOG_PARAMETERS,
     delivery: ["Нова пошта", "Укрпошта", "Міст", "Спецзв'язок Укрпошти"],
     documentTypes: ["Рахунок", "Видаткова накладна", "Реалізація", "Акт відповідального зберігання", "Повернення", "Переміщення"],
-    priceTypes: ["Роздріб", "B2B базова", "B2B дилер", "Маркетплейс", "Акційна"],
-    cashArticles: ["Продаж товарів", "Передоплата B2B", "Повернення коштів", "Конвертація валюти", "Інкасація"],
+    priceTypes: ["Маркетплейс", "Акційна", "Рекомендована"],
+    cashArticles: ["Продаж товарів", "Передоплата маркетплейсу", "Повернення коштів", "Конвертація валюти", "Інкасація"],
     expenseArticles: ["Комісія маркетплейсу", "Логістика", "Оренда", "Зарплата", "Банківська комісія", "Закупівля товару"],
+    salesFunnel: DEFAULT_SALES_FUNNEL,
+    communicators: {
+      viber: {
+        enabled: true,
+        mode: "test",
+        senderName: "Marketplace CRM",
+        authToken: "",
+        webhookUrl: "http://192.168.4.14:8789/api/viber/webhook",
+        defaultTemplate: "Вітаємо, {buyer}. Ваше замовлення {order} у статусі: {status}. Менеджер: {manager}."
+      },
+      callRecording: {
+        enabled: true,
+        consentRequired: true,
+        retentionDays: 180,
+        source: "browser_microphone"
+      }
+    },
+    dataExchange: {
+      channel: "marketplaces",
+      mode: "all",
+      marketplaceIds: ["rozetka", "prom", "epicentr", "allo"],
+      marketplaceData: ["products", "publications", "stock", "prices", "orders", "photos", "payments", "logistics", "clients", "messages", "orderQuestions", "sellerQuestions", "callCenterRequests", "returnRequests", "marketplaceThreads", "messageTemplates", "orderStatuses", "deliveryMethods", "productGroups", "reviews", "bundles"],
+      basData: ["products", "stock"],
+      oneCConnection: {
+        system: "1c_utp_ukraine_1_2",
+        transport: "file_json",
+        server: "192.168.0.5",
+        infobase: "pp_hor",
+        endpoint: "http://192.168.0.5/arms-crm/exchange",
+        format: "json",
+        login: "",
+        password: "",
+        lastExport: "",
+        lastImport: "",
+        lastStatus: "draft",
+        lastMessage: "Стартовий контур: 1C -> CRM, товари та залишки через файловий JSON."
+      }
+    },
+    novaPay: {
+      enabled: true,
+      mode: "test",
+      gatewayUrl: "/api/novapay/payments",
+      merchantId: "demo-merchant",
+      accountId: "",
+      autoCreatePayments: true,
+      status: "not_configured",
+      lastCheck: "",
+      lastImport: "",
+      lastErrorCode: "",
+      lastMessage: "Безпечний режим: CRM звертається тільки до серверного gateway, приватний ключ NovaPay у браузері не зберігається."
+    },
+    marketplaceSync: {
+      enabled: false,
+      intervalMinutes: 10,
+      lastRun: "",
+      lastStatus: "idle",
+      lastMessage: "Автооновлення Rozetka + NovaPay вимкнено."
+    },
     variantDictionaries: DEFAULT_VARIANT_DICTIONARIES,
     numberPrefix: "INV",
     defaultDueDays: 14,
@@ -147,7 +465,7 @@ const seedState = {
       canPrint: true
     },
     {
-      name: "Керівник продажів",
+      name: "Керівник маркетплейсів",
       canEditClosedDay: false,
       canSellWeapon: true,
       canChangePrices: true,
@@ -159,7 +477,7 @@ const seedState = {
       canPrint: true
     },
     {
-      name: "Менеджер магазину",
+      name: "Менеджер маркетплейсів",
       canEditClosedDay: false,
       canSellWeapon: true,
       canChangePrices: false,
@@ -171,7 +489,7 @@ const seedState = {
       canPrint: false
     },
     {
-      name: "Зав склад",
+      name: "Оператор складу",
       canEditClosedDay: false,
       canSellWeapon: true,
       canChangePrices: false,
@@ -195,7 +513,7 @@ const seedState = {
       canPrint: true
     },
     {
-      name: "B2B клієнт",
+      name: "Аналітик маркетплейсів",
       canEditClosedDay: false,
       canSellWeapon: false,
       canChangePrices: false,
@@ -208,50 +526,51 @@ const seedState = {
     }
   ],
   employees: [
-    { id: "emp-001", name: "Марія Шевчук", roleName: "Адміністратор", department: "Адміністрація", phone: "+380671112233", email: "m.shevchuk@example.com", active: true },
-    { id: "emp-002", name: "Олег Кравець", roleName: "Керівник продажів", department: "B2B", phone: "+380672224455", email: "o.kravets@example.com", active: true },
-    { id: "emp-003", name: "Ірина Бойко", roleName: "Менеджер магазину", department: "Магазин", phone: "+380673336677", email: "i.boiko@example.com", active: true },
-    { id: "emp-004", name: "Сергій Данилюк", roleName: "Зав склад", department: "Склад", phone: "+380674448899", email: "s.danyliuk@example.com", active: true },
-    { id: "emp-005", name: "Наталія Литвин", roleName: "Логіст", department: "Логістика", phone: "+380675559900", email: "n.lytvyn@example.com", active: true }
+    { id: "emp-001", name: "Марія Шевчук", roleName: "Адміністратор", department: "Адміністрація", phone: "+380671112233", email: "m.shevchuk@example.com", login: "admin", password: "admin", active: true },
+    { id: "emp-002", name: "Олег Кравець", roleName: "Керівник маркетплейсів", department: "Маркетплейси", phone: "+380672224455", email: "o.kravets@example.com", login: "lead", password: "1234", active: true },
+    { id: "emp-003", name: "Ірина Бойко", roleName: "Менеджер маркетплейсів", department: "Операції каналів", phone: "+380673336677", email: "i.boiko@example.com", login: "manager", password: "1234", active: true },
+    { id: "emp-004", name: "Сергій Данилюк", roleName: "Оператор складу", department: "Комплектація", phone: "+380674448899", email: "s.danyliuk@example.com", login: "sklad", password: "1234", active: true },
+    { id: "emp-005", name: "Наталія Литвин", roleName: "Логіст", department: "Логістика", phone: "+380675559900", email: "n.lytvyn@example.com", login: "logist", password: "1234", active: true },
+    { id: "emp-006", name: "Андрій Мельник", roleName: "Аналітик маркетплейсів", department: "Аналітика", phone: "+380676661122", email: "a.melnyk@example.com", login: "analyst", password: "1234", active: true }
   ],
-  managers: ["Марія Шевчук", "Олег Кравець", "Ірина Бойко", "Сергій Данилюк", "Наталія Литвин"],
+  managers: ["Марія Шевчук", "Олег Кравець", "Ірина Бойко", "Сергій Данилюк", "Наталія Литвин", "Андрій Мельник"],
   clients: [
     {
       id: "c-001",
       name: "Магазин Тактик Про",
-      type: "B2B",
+      type: "Marketplace",
       manager: "Марія Шевчук",
       paymentTerms: "Відтермінування 14 днів",
       creditLimitUAH: 450000,
-      cabinetEnabled: true,
-      portalLogin: "tactic",
-      portalPassword: "tactic",
+      cabinetEnabled: false,
+      portalLogin: "",
+      portalPassword: "",
       edrpou: "40112233",
       phone: "+380501234567",
       email: "office@tactic-pro.ua",
-      priceType: "B2B дилер",
+      priceType: "Маркетплейс",
       currency: "UAH",
       taxMode: "ПДВ",
-      responsibleStorage: true,
+      responsibleStorage: false,
       address: "Київ, вул. Складська, 12"
     },
     {
       id: "c-002",
       name: "Стрілецький Дім",
-      type: "B2B",
+      type: "Marketplace",
       manager: "Олег Кравець",
       paymentTerms: "Попередня оплата",
       creditLimitUAH: 0,
-      cabinetEnabled: true,
-      portalLogin: "strilets",
-      portalPassword: "strilets",
+      cabinetEnabled: false,
+      portalLogin: "",
+      portalPassword: "",
       edrpou: "30998877",
       phone: "+380631112233",
       email: "sales@striletskyi-dim.ua",
-      priceType: "B2B базова",
+      priceType: "Маркетплейс",
       currency: "UAH",
       taxMode: "без ПДВ",
-      responsibleStorage: true,
+      responsibleStorage: false,
       address: "Львів, вул. Промислова, 4"
     },
     {
@@ -344,7 +663,7 @@ const seedState = {
       minStock: 12,
       leadTimeDays: 14,
       catalogTag: "Акція",
-      description: "Коліматорний приціл для роздрібного та B2B продажу.",
+      description: "Коліматорний приціл для продажу на маркетплейсах.",
       photos: []
     },
     {
@@ -586,6 +905,41 @@ const seedState = {
       bankRef: "cash-shift-47"
     }
   ],
+  novaPayTransactions: [
+    {
+      id: "npay-demo-001",
+      ttn: "NP-590010333",
+      date: "2026-05-23",
+      paidAt: "2026-05-23 12:44",
+      amount: 5400,
+      currency: "UAH",
+      payerName: "Олександр Клименко",
+      status: "paid",
+      gatewayRef: "gateway-demo-ok"
+    },
+    {
+      id: "npay-demo-002",
+      ttn: "",
+      date: "2026-05-23",
+      paidAt: "2026-05-23 13:05",
+      amount: 900,
+      currency: "UAH",
+      payerName: "Без ТТН",
+      status: "paid",
+      gatewayRef: "gateway-demo-empty-ttn"
+    },
+    {
+      id: "npay-demo-003",
+      ttn: "NP-590010333",
+      date: "2026-05-23",
+      paidAt: "2026-05-23 13:15",
+      amount: 5300,
+      currency: "UAH",
+      payerName: "Олександр Клименко",
+      status: "paid",
+      gatewayRef: "gateway-demo-mismatch"
+    }
+  ],
   expenses: [
     { id: "exp-001", date: "2026-05-22", article: "Комісія маркетплейсу", amount: 648, currency: "UAH", method: "Безготівка", manager: "Ірина Бойко", supplier: "Rozetka", comment: "Комісія по замовленню NP-590010222" },
     { id: "exp-002", date: "2026-05-21", article: "Логістика", amount: 920, currency: "UAH", method: "Безготівка", manager: "Марія Шевчук", supplier: "Спецзв'язок Укрпошти", comment: "Доставка серійного товару" },
@@ -621,9 +975,9 @@ const seedState = {
       marketplace: "Rozetka",
       externalOrderId: "RZ-20260523-101",
       date: "2026-05-23",
-      status: "new_order",
-      dates: { created: "2026-05-23", agreed: "", warehouse: "", delivery: "", delivered: "", paid: "" },
-      warehouseStatus: "new",
+      status: "waiting_payment",
+      dates: { created: "2026-05-23", agreed: "2026-05-23", warehouse: "", delivery: "2026-05-23", delivered: "", paid: "" },
+      warehouseStatus: "reserved",
       manager: "Ірина Бойко",
       productId: "p-200",
       sku: "OP-RPOINT-RZ",
@@ -631,12 +985,107 @@ const seedState = {
       price: 5400,
       currency: "UAH",
       buyer: { name: "Олександр Клименко", phone: "+380501119900", email: "buyer101@example.com", edrpou: "", address: "Київ, відділення Нової пошти 12" },
-      delivery: { service: "Нова пошта", city: "Київ", warehouse: "Відділення 12", ttn: "", status: "new", apiStatus: "Очікує ТТН", lastCheck: "" },
+      delivery: { service: "Нова пошта", city: "Київ", warehouse: "Відділення 12", ttn: "NP-590010333", status: "in_transit", apiStatus: "ТТН передано до NovaPay-звірки", lastCheck: "2026-05-23 12:00" },
       payment: { method: "Післяплата маркетплейсу", status: "expected", amount: 5400, source: "RozetkaPay", apiStatus: "Очікує оплату", lastCheck: "", paidAt: "" },
       clientId: "",
       invoiceId: ""
     }
   ],
+  viberMessages: [],
+  communicationEvents: [],
+  marketplaceCustomerQuestions: [
+    {
+      id: "mq-001",
+      marketplace: "Rozetka",
+      sourceType: "order_question",
+      externalId: "chat-205506",
+      chatId: "205506",
+      orderId: "mpo-001",
+      externalOrderId: "RZ-20260523-101",
+      buyerName: "Олександр Клименко",
+      buyerContact: "+380501119900",
+      subject: "Питання про замовлення",
+      message: "Добрий день. Коли буде відправка і чи можна змінити відділення Нової пошти?",
+      status: "new",
+      priority: "normal",
+      createdAt: "2026-05-27 10:20",
+      updatedAt: "2026-05-27 10:20",
+      manager: "Ірина Бойко",
+      answer: "",
+      answeredAt: "",
+      apiStatus: "отримано з Rozetka API",
+      raw: {}
+    },
+    {
+      id: "mq-002",
+      marketplace: "Rozetka",
+      sourceType: "seller_question",
+      externalId: "chat-item-93001",
+      chatId: "93001",
+      orderId: "",
+      externalOrderId: "",
+      buyerName: "Покупець Rozetka",
+      buyerContact: "",
+      subject: "Запитання продавцю",
+      message: "Чи підходить цей товар для комплектації з іншим набором?",
+      status: "waiting_customer",
+      priority: "normal",
+      createdAt: "2026-05-27 11:05",
+      updatedAt: "2026-05-27 11:05",
+      manager: "Марія Шевчук",
+      answer: "Підходить, але потрібно перевірити модель товару.",
+      answeredAt: "2026-05-27 11:20",
+      apiStatus: "відповідь зафіксована в CRM",
+      raw: {}
+    },
+    {
+      id: "mq-003",
+      marketplace: "Rozetka",
+      sourceType: "return_request",
+      externalId: "call-264",
+      requestId: "264",
+      orderId: "mpo-001",
+      externalOrderId: "RZ-20260523-101",
+      buyerName: "Олександр Клименко",
+      buyerContact: "+380501119900",
+      subject: "Заявка на повернення",
+      message: "Покупець просить уточнити умови повернення після отримання.",
+      status: "open",
+      priority: "high",
+      createdAt: "2026-05-27 12:10",
+      updatedAt: "2026-05-27 12:10",
+      manager: "Ірина Бойко",
+      answer: "",
+      answeredAt: "",
+      apiStatus: "очікує відповіді менеджера",
+      raw: {}
+    }
+  ],
+  marketplaceServiceThreads: [
+    {
+      id: "msth-001",
+      marketplace: "Rozetka",
+      sourceType: "marketplace_thread",
+      externalId: "support-12",
+      requestId: "12",
+      subject: "Питання по API",
+      message: "ROZETKA просить уточнити дані інтеграції та перевірити доступ до листування.",
+      status: "open",
+      createdAt: "2026-05-27 09:40",
+      updatedAt: "2026-05-27 09:40",
+      manager: "Марія Шевчук",
+      answer: "",
+      answeredAt: "",
+      apiStatus: "переписка з ROZETKA",
+      raw: {}
+    }
+  ],
+  marketplaceMessageTemplates: [
+    { id: "mtpl-001", name: "Уточнення по замовленню", text: "Добрий день. Уточніть, будь ласка, деталі по замовленню {order}. Після підтвердження передамо його в роботу." },
+    { id: "mtpl-002", name: "Відповідь на питання про товар", text: "Добрий день. Товар доступний. Можемо уточнити сумісність, якщо напишете модель або призначення." },
+    { id: "mtpl-003", name: "Повернення", text: "Добрий день. Ми перевірили заявку на повернення по замовленню {order}. Напишіть, будь ласка, причину та фото товару/упаковки." }
+  ],
+  callRecordings: [],
   reportBuilder: {
     reportId: "sales",
     from: "2026-05-01",
@@ -658,6 +1107,7 @@ const seedState = {
     clientPortal: { from: "2026-05-01", to: "2026-05-23" },
     clientCatalogHistory: { from: "2026-05-01", to: "2026-05-23" }
   },
+  smartListPreferences: {},
   marketplaceOrderFilters: {
     from: "2026-05-01",
     to: "2026-05-23",
@@ -665,9 +1115,25 @@ const seedState = {
     marketplace: "",
     expanded: false
   },
+  marketplaceCommunicationFilters: {
+    questionType: "order_question"
+  },
+  marketplaceFunnelManager: "",
   marketplacePublicationFilters: {
     search: "",
     expanded: false
+  },
+  salesClientFilters: {
+    search: "",
+    source: "",
+    from: "",
+    to: "",
+    expanded: false
+  },
+  productTableFilters: {
+    catalog: "",
+    stock: "",
+    publications: ""
   },
   b2bShipmentRequestFilters: {
     from: "2026-05-01",
@@ -701,25 +1167,42 @@ const seedState = {
     lastOrdersSync: "",
     lastGoodsCount: 0,
     lastOrdersCount: 0,
-    lastError: ""
+    lastError: "",
+    progress: {
+      status: "idle",
+      percent: 0,
+      stage: "Очікує запуск",
+      message: "Запустіть імпорт з Rozetka в блоці Обмін даними.",
+      code: "",
+      updatedAt: ""
+    }
   },
   inventoryFilters: {
     warehouseId: "",
     firmId: ""
   },
   integrations: [
-    { id: "rozetka", name: "Rozetka", status: "token_needed", lastSync: "2026-05-22 18:10", scope: "товари, замовлення, залишки, ціни" },
+    { id: "rozetka", name: "Rozetka", status: "token_needed", lastSync: "2026-05-22 18:10", scope: "тільки завантаження: товари, публікації, замовлення" },
     { id: "prom", name: "Prom", status: "ok", lastSync: "2026-05-23 09:15", scope: "товари, замовлення, залишки, ціни" },
-    { id: "epicentr", name: "Epicentr", status: "mapping_needed", lastSync: "2026-05-21 16:45", scope: "товари, замовлення, залишки" },
+    { id: "epicentr", name: "Epicentr", status: "mapping_needed", lastSync: "2026-05-21 16:45", scope: "замовлення, статуси, доставка, клієнтські дані" },
     { id: "allo", name: "Allo", status: "ok", lastSync: "2026-05-23 08:40", scope: "товари, замовлення, залишки, ціни" },
-    { id: "bas", name: "BAS/BAF", status: "ok", lastSync: "2026-05-23 07:10", scope: "позначені документи бухобліку" },
+    { id: "bas", name: "1C / BAS / BAF", status: "ok", lastSync: "2026-05-23 07:10", scope: "товари, клієнти, оплати, борги, залишки, відвантаження" },
     { id: "bank", name: "Банки", status: "mapping_needed", lastSync: "2026-05-22 20:00", scope: "виписки, платежі, валюта" }
   ],
   audit: [
     { at: "2026-05-23 09:15", actor: "system", action: "Prom sync: оновлено 4 залишки та 2 ціни" },
     { at: "2026-05-22 18:10", actor: "system", action: "Rozetka sync: потрібне оновлення токена" },
     { at: "2026-05-22 12:25", actor: "Марія Шевчук", action: "Накладну inv-240521-001 позначено для BAS/BAF" }
-  ]
+  ],
+  clientLogPreview: {
+    logPath: "",
+    workLogPath: "D:\\Codex\\CRM\\SQL\\docs\\crm-sql-work-log-2026-06-01.md",
+    rows: [],
+    checkedAt: "",
+    lastStatus: "idle",
+    lastMessage: "Журнал ще не читали з сервера.",
+    lastErrorCode: ""
+  }
 };
 
 const ROLE_BASIC_PERMISSIONS = [
@@ -738,8 +1221,6 @@ const ROLE_DOCUMENT_PERMISSIONS = [
   ["salesInvoice", "Продаж / накладна"],
   ["purchase", "Прихід"],
   ["responsibleShipment", "Відповідальне зберігання"],
-  ["b2bShipmentRequest", "Заявка B2B на відвантаження"],
-  ["b2bSaleReport", "Звіт продажу B2B"],
   ["payment", "Оплата"],
   ["expense", "Витрата"],
   ["payable", "Кредиторка"],
@@ -749,10 +1230,21 @@ const ROLE_DOCUMENT_PERMISSIONS = [
   ["clientEdit", "Зміна картки клієнта"],
   ["serialCorrection", "Серійний облік"],
   ["marketplacePublication", "Публікація маркетплейсу"],
+  ["marketplacePublicationEdit", "Зміна публікації маркетплейсу"],
   ["marketplaceOrder", "Замовлення маркетплейсу"],
+  ["marketplaceOrderEdit", "Зміна замовлення маркетплейсу"],
+  ["marketplaceCommunication", "Комунікація з покупцем"],
+  ["marketplaceCustomerQuestions", "Питання покупців маркетплейсу"],
+  ["marketplaceServiceThreads", "Переписка з маркетплейсом"],
   ["marketplaceStatus", "Зміна статусу маркетплейсу"],
+  ["warehousePicking", "Складська відбірка замовлення"],
+  ["warehouseHandover", "Передача замовлення логісту"],
+  ["logisticsAcceptance", "Підтвердження логістом передачі"],
   ["deliveryTracking", "Відстеження доставки / ТТН"],
   ["paymentTracking", "Відстеження оплати"],
+  ["novaPayApi", "NovaPay API gateway"],
+  ["novaPayReconciliation", "Рознесення NovaPay по ТТН"],
+  ["dataExchange", "Обмін даними"],
   ["settingsDocument", "Налаштування"]
 ];
 
@@ -760,7 +1252,6 @@ const ROLE_POSTED_DOCUMENT_PERMISSIONS = [
   ["salesInvoice", "Проведена накладна продажу"],
   ["purchase", "Проведений прихід"],
   ["responsibleShipment", "Проведене відповідальне зберігання"],
-  ["b2bSaleReport", "Проведений звіт продажу B2B"],
   ["payment", "Проведена оплата"],
   ["expense", "Проведена витрата"],
   ["payable", "Проведена кредиторка"],
@@ -775,6 +1266,7 @@ const ROLE_FIELD_PERMISSIONS = [
   ["client", "Клієнт"],
   ["product", "Товар / QR"],
   ["warehouse", "Склад"],
+  ["logistics", "Логістика"],
   ["price", "Ціна"],
   ["discount", "Знижка"],
   ["cost", "Собівартість"],
@@ -787,20 +1279,163 @@ const ROLE_FIELD_PERMISSIONS = [
   ["marketplace", "Маркетплейс"],
   ["marketplaceStatus", "Статус маркетплейс-замовлення"],
   ["deliveryTracking", "ТТН / статус доставки"],
-  ["paymentTracking", "Статус оплати маркетплейсу"]
+  ["paymentTracking", "Статус оплати маркетплейсу"],
+  ["novaPay", "NovaPay API / рознесення ТТН"],
+  ["dataExchangeScope", "Обмін: вся інформація / вибірково"]
 ];
 
 const DEFAULT_PRICE_TYPES = [
   { id: "purchase", name: "Прихідна", kind: "cost", active: true, system: true },
-  { id: "retail", name: "Роздрібна", kind: "sale", active: true, system: true },
-  { id: "b2b", name: "B2B", kind: "sale", active: true, system: true }
+  { id: "retail", name: "Роздріб", kind: "sale", active: true, system: true },
+  { id: "marketplace", name: "Маркетплейс", kind: "sale", active: true, system: true },
+  { id: "promo", name: "Акційна", kind: "sale", active: true, system: true }
 ];
 
+const DATA_EXCHANGE_MARKETPLACE_DATA = [
+  ["products", "Товари"],
+  ["publications", "Публікації"],
+  ["stock", "Залишки"],
+  ["prices", "Ціни"],
+  ["orders", "Замовлення"],
+  ["photos", "Фото"],
+  ["payments", "Оплати"],
+  ["logistics", "Логістика"],
+  ["clients", "Покупці / клієнти"],
+  ["messages", "Повідомлення / чат"],
+  ["orderQuestions", "Питання про замовлення"],
+  ["sellerQuestions", "Запитання продавцю"],
+  ["callCenterRequests", "Звернення в Call Center"],
+  ["returnRequests", "Заявки на повернення"],
+  ["marketplaceThreads", "Переписка з маркетплейсом"],
+  ["messageTemplates", "Шаблони повідомлень"],
+  ["orderStatuses", "Статуси замовлень"],
+  ["deliveryMethods", "Способи доставки"],
+  ["productGroups", "Групи / категорії товарів"],
+  ["reviews", "Відгуки"],
+  ["bundles", "Комплекти товарів"]
+];
+
+const DATA_EXCHANGE_MARKETPLACE_CAPABILITIES = [
+  {
+    marketplace: "Rozetka",
+    exchange: "Товари, публікації, фото, замовлення, чати з покупцями, питання про замовлення, запитання продавцю, звернення Call Center, заявки на повернення, переписка з ROZETKA, доставка, відгуки, комплекти",
+    direction: "GET у CRM; відповіді в чат покупця через /messages/create за наявності API-доступу",
+    note: "Rozetka API має окремий блок письмової комунікації з покупцем: /messages/counts, /messages/search і /messages/create. Звернення Call Center підтягуються окремо через /calls/search."
+  },
+  {
+    marketplace: "Prom",
+    exchange: "Товари, замовлення, клієнти, повідомлення, групи товарів, оплата, доставка, статуси, чат",
+    direction: "GET/POST за токеном API",
+    note: "Для CRM можна вмикати всю інформацію або тільки вибрані блоки."
+  },
+  {
+    marketplace: "Epicentr",
+    exchange: "Замовлення, клієнтські дані замовлення, статуси, доставка/ТТН, способи оплати та довідники через Swagger",
+    direction: "Merchant API",
+    note: "За документацією Epicentr обмін цін і залишків наразі недоступний, тому їх не позначаємо як гарантований канал."
+  },
+  {
+    marketplace: "Allo",
+    exchange: "API-інтеграція для швидкої роботи з кабінетом продавця",
+    direction: "Партнерський доступ",
+    note: "Публічна сторінка підтверджує наявність API, детальні методи залежать від доступу в партнерському кабінеті."
+  }
+];
+
+const DATA_EXCHANGE_BAS_DATA = [
+  ["products", "Номенклатура / товари"],
+  ["clients", "Контрагенти / клієнти"],
+  ["orders", "Замовлення маркетплейсів"],
+  ["salesDocs", "Продажі / накладні"],
+  ["shipments", "Відвантаження / ТТН"],
+  ["payments", "Оплати"],
+  ["receivables", "Дебіторка"],
+  ["payables", "Кредиторка"],
+  ["purchaseDocs", "Приходи"],
+  ["stock", "Залишки"],
+  ["stockMoves", "Складські рухи"],
+  ["expenses", "Витрати"]
+];
+
+const DEMO_EMPLOYEE_LOGINS = {
+  "emp-001": "admin",
+  "emp-002": "lead",
+  "emp-003": "manager",
+  "emp-004": "sklad",
+  "emp-005": "logist",
+  "emp-006": "analyst"
+};
+
+const LINKED_REQUISITE_DEFS = {
+  client: {
+    label: "клієнта",
+    nameField: "name",
+    fields: {
+      phones: { single: "phone", label: "Телефон" },
+      emails: { single: "email", label: "Email" },
+      edrpous: { single: "edrpou", label: "ЄДРПОУ / ІПН" },
+      addresses: { single: "address", label: "Адреса" }
+    }
+  },
+  supplier: {
+    label: "постачальника",
+    nameField: "name",
+    fields: {
+      phones: { single: "phone", label: "Телефон" },
+      emails: { single: "email", label: "Email" },
+      edrpous: { single: "edrpou", label: "ЄДРПОУ / ІПН" },
+      addresses: { single: "address", label: "Адреса" }
+    }
+  },
+  product: {
+    label: "товару",
+    nameField: "model",
+    fields: {
+      barcodes: { single: "barcode", label: "QR / штрихкод" },
+      supplierSkus: { single: "supplierSku", label: "Артикул постачальника" },
+      internalCodes: { single: "internalCode", label: "Внутрішній код" },
+      uktzeds: { single: "uktzed", label: "УКТЗЕД" },
+      marketplaceSkus: { single: "marketplaceSku", label: "SKU маркетплейсу" },
+      skus: { single: "marketplaceSku", label: "SKU товару" }
+    }
+  }
+};
+
+const APP_DATA_PROFILE = "external-empty-v1";
+const EXTERNAL_SYNC_SOURCES = ["crmSql", "oneC", "rozetka", "novaPay", "novaPoshta", "prom", "epicentr", "allo"];
+const CLEAN_DATA_COLLECTIONS = [
+  "clients",
+  "products",
+  "warehouses",
+  "purchases",
+  "serials",
+  "invoices",
+  "payments",
+  "expenses",
+  "payables",
+  "stock",
+  "responsibleStorageDocs",
+  "b2bShipmentRequests",
+  "salesPlans",
+  "marketplaceStats",
+  "marketplacePublications",
+  "marketplaceOrders",
+  "novaPayTransactions",
+  "novaPoshtaDocuments",
+  "viberMessages",
+  "communicationEvents",
+  "marketplaceCustomerQuestions",
+  "marketplaceServiceThreads",
+  "callRecordings"
+];
+const EXTERNAL_SYNC_VOLATILE_KEYS = new Set(["apiStatus", "checkedAt", "importedAt", "lastCheck", "lastSync", "updatedAt"]);
+
 let state = normalizeState(loadState());
+bootstrapMarketplaceOrderAutomation();
 let saleDraft = {
   clientId: "",
   priceType: "",
-  lines: [{ productId: "p-200", qty: 1, serialIds: [], permitNumber: "", permitDate: "", barcode: "" }]
+  lines: [{ productId: "", qty: 1, serialIds: [], permitNumber: "", permitDate: "", barcode: "" }]
 };
 let purchaseDraft = {
   lines: []
@@ -808,16 +1443,26 @@ let purchaseDraft = {
 let marketplacePublicationDraft = {
   lines: []
 };
-let b2bDraft = { shipmentProductId: "p-100", saleProductId: "p-100", saleClientId: "c-001", shipmentFirmId: "vat", saleFirmId: "vat" };
+let b2bDraft = { shipmentProductId: "", saleProductId: "", saleClientId: "", shipmentFirmId: "vat", saleFirmId: "vat" };
 let clientPortalDraft = { productId: "", firmId: "", barcode: "", qty: 1, serialIds: [], permitNumber: "", permitDate: "" };
 let paymentDraft = { source: "cash", kind: "invoice", clientId: "", invoiceId: "", firmId: "", terminalId: "", prro: "true" };
-let authEmployeeId = sessionStorage.getItem("arms-crm-auth-employee-id") || "";
-let authClientId = sessionStorage.getItem("arms-crm-auth-client-id") || "";
-let authMode = sessionStorage.getItem("arms-crm-auth-mode") || (authClientId ? "client" : authEmployeeId ? "employee" : "");
-let clientPortalView = sessionStorage.getItem("arms-crm-client-view") || "cabinet";
+let authEmployeeId = appSessionStorage.getItem("arms-crm-auth-employee-id") || "";
+let authClientId = appSessionStorage.getItem("arms-crm-auth-client-id") || "";
+let authMode = appSessionStorage.getItem("arms-crm-auth-mode") || (authClientId ? "client" : authEmployeeId ? "employee" : "");
+let clientPortalView = appSessionStorage.getItem("arms-crm-client-view") || "cabinet";
 let clientCatalogFilters = loadClientCatalogFilters();
-let sidebarCollapsed = localStorage.getItem("arms-crm-sidebar-collapsed") === "true";
+let sidebarCollapsed = appLocalStorage.getItem("arms-crm-sidebar-collapsed") === "true";
+let subnavHideTimer = null;
 let productImagesDraft = [];
+let oneCAutoImportEnabled = appLocalStorage.getItem("arms-crm-onec-auto-import") === "true";
+let oneCAutoImportTimer = null;
+let marketplaceAutoSyncEnabled = appLocalStorage.getItem("arms-crm-marketplace-auto-sync") === "true";
+let marketplaceAutoSyncTimer = null;
+let marketplaceAutoSyncRunning = false;
+let activeCallRecorder = null;
+let activeCallStream = null;
+let activeCallChunks = [];
+let activeCallMeta = null;
 
 const MARKETPLACE_IMAGE_TYPES = ["image/jpeg", "image/png"];
 const MARKETPLACE_IMAGE_EXTENSIONS = ".jpg,.jpeg,.png";
@@ -825,16 +1470,82 @@ const MAX_PRODUCT_PHOTOS = 6;
 const MAX_PRODUCT_PHOTO_BYTES = 8 * 1024 * 1024;
 const PRODUCT_PHOTO_MAX_SIDE = 1280;
 const PRODUCT_PHOTO_JPEG_QUALITY = 0.82;
+const MARKETPLACE_AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const EXCHANGE_PROCESS_DEFAULTS = {
+  crmSql: {
+    label: "CRM SQL",
+    status: "idle",
+    percent: 0,
+    stage: "Очікує запуску",
+    message: "Оновлення з SQL запускається з центру обміну.",
+    code: "",
+    updatedAt: ""
+  },
+  oneC: {
+    label: "1C / BAS",
+    status: "idle",
+    percent: 0,
+    stage: "Очікує запуску",
+    message: "Тільки читання з ToCRM або підготовка пакета; запис назад у 1C вимкнений.",
+    code: "",
+    updatedAt: ""
+  },
+  rozetka: {
+    label: "Rozetka",
+    status: "idle",
+    percent: 0,
+    stage: "Очікує запуску",
+    message: "Швидке оновлення замовлень або повний імпорт доступні в цьому блоці.",
+    code: "",
+    updatedAt: ""
+  },
+  novaPay: {
+    label: "NovaPay",
+    status: "idle",
+    percent: 0,
+    stage: "Очікує запуску",
+    message: "Платежі отримуються через серверний gateway і розносяться по ТТН.",
+    code: "",
+    updatedAt: ""
+  },
+  novaPoshta: {
+    label: "Нова пошта",
+    status: "idle",
+    percent: 0,
+    stage: "Очікує запуску",
+    message: "Статуси ТТН читаються через серверний gateway без API-ключа в браузері.",
+    code: "",
+    updatedAt: ""
+  },
+  prom: {
+    label: "Prom",
+    status: "planned",
+    percent: 0,
+    stage: "Заплановано",
+    message: "Блок зарезервований для майбутнього API Prom.",
+    code: "",
+    updatedAt: ""
+  },
+  epicentr: {
+    label: "Epicentr",
+    status: "planned",
+    percent: 0,
+    stage: "Заплановано",
+    message: "Блок зарезервований для майбутнього API Epicentr.",
+    code: "",
+    updatedAt: ""
+  },
+  allo: {
+    label: "Allo",
+    status: "planned",
+    percent: 0,
+    stage: "Заплановано",
+    message: "Блок зарезервований для майбутнього API Allo.",
+    code: "",
+    updatedAt: ""
+  }
+};
 
-const MARKETPLACE_ORDER_STATUSES = [
-  { id: "new_order", label: "новий", className: "marketplace-new" },
-  { id: "agreed", label: "погоджено", className: "marketplace-agreed" },
-  { id: "sent_to_warehouse", label: "передано на склад", className: "marketplace-warehouse" },
-  { id: "sent_to_delivery", label: "передано на доставку", className: "marketplace-delivery" },
-  { id: "delivered", label: "доставлено / вручено", className: "marketplace-delivered" },
-  { id: "paid", label: "оплачено", className: "marketplace-paid" }
-];
-const MARKETPLACE_ORDER_STATUS_MAP = Object.fromEntries(MARKETPLACE_ORDER_STATUSES.map((item) => [item.id, item]));
 const B2B_SHIPMENT_REQUEST_STATUSES = [
   { id: "request_new", label: "нова заявка" },
   { id: "request_review", label: "потребує виправлення" },
@@ -945,6 +1656,21 @@ function productSalePrice(product, priceTypeId = "") {
   };
 }
 
+function applyImportedProductPrice(product, amount, currency = "UAH") {
+  const price = parseDecimal(amount, product.price || 0);
+  if (!Number.isFinite(price) || price <= 0) return;
+  product.price = price;
+  product.currency = currency || product.currency || "UAH";
+  product.prices = normalizeProductPrices(product, state.settings.priceTypes);
+  activeSalePriceTypes().forEach((type) => {
+    product.prices[type.id] = {
+      ...(product.prices[type.id] || {}),
+      amount: price,
+      currency: product.currency
+    };
+  });
+}
+
 function productPriceInputs(product = {}) {
   return activeSalePriceTypes().map((item) => {
     const entry = (product.prices || {})[item.id] || {};
@@ -1009,7 +1735,18 @@ function normalizeVariantDictionaries(settings = {}) {
       const uniqueKey = `${entry.parentId || ""}:${entry.value || entry.name}`.toLowerCase();
       byKey.set(uniqueKey, { ...(byKey.get(uniqueKey) || {}), ...entry });
     });
-    result[definition.key] = Array.from(byKey.values());
+    let entries = Array.from(byKey.values());
+    if (definition.key === "clientTypes") {
+      entries = entries.filter((entry) => String(entry.value || entry.name).toLowerCase() !== "b2b");
+    }
+    if (definition.key === "cashArticles") {
+      entries = entries.map((entry) => (
+        String(entry.value || entry.name).toLowerCase() === "передоплата b2b"
+          ? { ...entry, name: "Передоплата маркетплейсу", value: "Передоплата маркетплейсу" }
+          : entry
+      ));
+    }
+    result[definition.key] = entries;
   });
   return result;
 }
@@ -1060,14 +1797,14 @@ function defaultClientCatalogFilters() {
 
 function loadClientCatalogFilters() {
   try {
-    return { ...defaultClientCatalogFilters(), ...JSON.parse(sessionStorage.getItem("arms-crm-client-catalog-filters") || "{}") };
+    return { ...defaultClientCatalogFilters(), ...JSON.parse(appSessionStorage.getItem("arms-crm-client-catalog-filters") || "{}") };
   } catch (error) {
     return defaultClientCatalogFilters();
   }
 }
 
 function saveClientCatalogFilters() {
-  sessionStorage.setItem("arms-crm-client-catalog-filters", JSON.stringify(clientCatalogFilters));
+  appSessionStorage.setItem("arms-crm-client-catalog-filters", JSON.stringify(clientCatalogFilters));
 }
 
 function normalizeCatalogParameterEntry(item, key, index = 0) {
@@ -1208,6 +1945,7 @@ const FIELD_LOCKS = {
   marketplaceStatus: ["status"],
   deliveryTracking: ["ttn", "deliveryStatus"],
   paymentTracking: ["paymentStatus"],
+  novaPay: ["novaPayEnabled", "novaPayMode", "novaPayGatewayUrl", "novaPayMerchantId", "novaPayAccountId", "novaPayAutoCreatePayments", "novaPayPayload"],
   productRequisites: [],
   clientRequisites: []
 };
@@ -1244,13 +1982,248 @@ function uniqueList(values) {
   }, []);
 }
 
+function sortedExternalPayload(value) {
+  if (Array.isArray(value)) return value.map(sortedExternalPayload);
+  if (!value || typeof value !== "object") return value;
+  return Object.keys(value)
+    .filter((key) => !EXTERNAL_SYNC_VOLATILE_KEYS.has(key))
+    .sort()
+    .reduce((result, key) => {
+      result[key] = sortedExternalPayload(value[key]);
+      return result;
+    }, {});
+}
+
+function stableExternalStringify(value) {
+  try {
+    return JSON.stringify(sortedExternalPayload(value));
+  } catch (error) {
+    return String(value ?? "");
+  }
+}
+
+function loadedProfileMatchesCurrent(loaded = {}) {
+  return loaded?.dataProfile === APP_DATA_PROFILE
+    && loaded?.settings?.externalSync?.profile === APP_DATA_PROFILE;
+}
+
+function shouldUseLoadedOperationalData(loaded = {}) {
+  return loadedProfileMatchesCurrent(loaded);
+}
+
+function externalSyncDefaults(existing = {}) {
+  const sources = { ...(existing.sources || {}) };
+  EXTERNAL_SYNC_SOURCES.forEach((source) => {
+    sources[source] = {
+      collections: {},
+      ...(sources[source] || {})
+    };
+  });
+  return {
+    profile: APP_DATA_PROFILE,
+    mode: "external_only_delta",
+    cleanDemoData: true,
+    lastCleanupAt: existing.lastCleanupAt || "",
+    updatedAt: existing.updatedAt || "",
+    sources
+  };
+}
+
+function seedDataFingerprints(key) {
+  return new Set((Array.isArray(seedState[key]) ? seedState[key] : []).map(stableExternalStringify));
+}
+
+function seedDataIds(key) {
+  return new Set((Array.isArray(seedState[key]) ? seedState[key] : [])
+    .map((row) => String(row?.id || "").trim())
+    .filter(Boolean));
+}
+
+function isSeedDemoRow(key, row) {
+  if (!row || typeof row !== "object") return false;
+  const id = String(row.id || "").trim();
+  if (id && seedDataIds(key).has(id)) return true;
+  return seedDataFingerprints(key).has(stableExternalStringify(row));
+}
+
+function cleanLoadedDataRows(loaded, key) {
+  if (!shouldUseLoadedOperationalData(loaded)) return [];
+  const rows = Array.isArray(loaded?.[key]) ? loaded[key] : [];
+  return rows.filter((row) => !isSeedDemoRow(key, row));
+}
+
+function ensureRuntimeExternalSync() {
+  state.settings = state.settings || {};
+  state.settings.externalSync = externalSyncDefaults(state.settings.externalSync || {});
+  return state.settings.externalSync;
+}
+
+function externalRecordChange(source, collection, key, payload) {
+  const sync = ensureRuntimeExternalSync();
+  const sourceState = sync.sources[source] || { collections: {} };
+  sourceState.collections = sourceState.collections || {};
+  const collectionState = sourceState.collections[collection] || {};
+  const safeKey = String(key || "").trim() || stableExternalStringify(payload).slice(0, 120);
+  const hash = stableExternalStringify(payload);
+  const previous = collectionState[safeKey];
+  sync.sources[source] = sourceState;
+  if (previous === hash) {
+    return { source, collection, key: safeKey, hash, changed: false, status: "skipped" };
+  }
+  return { source, collection, key: safeKey, hash, changed: true, status: previous ? "changed" : "new" };
+}
+
+function markExternalRecordApplied(change) {
+  if (!change?.changed) return;
+  const sync = ensureRuntimeExternalSync();
+  const sourceState = sync.sources[change.source] || { collections: {} };
+  sourceState.collections = sourceState.collections || {};
+  sourceState.collections[change.collection] = sourceState.collections[change.collection] || {};
+  sourceState.collections[change.collection][change.key] = change.hash;
+  sourceState.lastAppliedAt = currentTimestamp();
+  sync.sources[change.source] = sourceState;
+  sync.updatedAt = currentTimestamp();
+}
+
+function changedExternalRows(source, collection, rows, keyForRow) {
+  return rows.reduce((result, row, index) => {
+    const key = keyForRow(row, index);
+    const change = externalRecordChange(source, collection, key, row);
+    if (!change.changed) {
+      result.skipped += 1;
+      return result;
+    }
+    result.rows.push({ row, change });
+    result[change.status === "new" ? "created" : "updated"] += 1;
+    return result;
+  }, { rows: [], created: 0, updated: 0, skipped: 0 });
+}
+
+function applyChangedExternalRows(source, collection, rows, keyForRow, applyRow) {
+  const changes = changedExternalRows(source, collection, rows, keyForRow);
+  const result = { applied: 0, created: changes.created, updated: changes.updated, skipped: changes.skipped };
+  changes.rows.forEach(({ row, change }) => {
+    const applied = applyRow(row, change);
+    if (!applied) return;
+    markExternalRecordApplied(change);
+    result.applied += 1;
+  });
+  return result;
+}
+
+function normalizeLinkedRequisites(record, parentType) {
+  const def = LINKED_REQUISITE_DEFS[parentType];
+  if (!record || !def) return record;
+  Object.entries(def.fields).forEach(([listKey, field]) => {
+    const currentList = Array.isArray(record[listKey]) ? record[listKey] : [];
+    const values = uniqueList([...currentList, record[field.single]]);
+    record[listKey] = values;
+    record[field.single] = String(record[field.single] || "").trim() || values[0] || "";
+  });
+  return record;
+}
+
+function normalizeClientRequisites(client) {
+  return normalizeLinkedRequisites(client, "client");
+}
+
+function normalizeSupplierRequisites(supplier) {
+  return normalizeLinkedRequisites(supplier, "supplier");
+}
+
+function normalizeProductRequisites(product) {
+  normalizeLinkedRequisites(product, "product");
+  product.barcodes = uniqueList([...(Array.isArray(product.barcodes) ? product.barcodes : []), product.barcode, product.qrCode]);
+  product.supplierSkus = uniqueList([...(Array.isArray(product.supplierSkus) ? product.supplierSkus : []), product.supplierSku]);
+  product.internalCodes = uniqueList([...(Array.isArray(product.internalCodes) ? product.internalCodes : []), product.internalCode]);
+  product.uktzeds = uniqueList([...(Array.isArray(product.uktzeds) ? product.uktzeds : []), product.uktzed]);
+  product.marketplaceSkus = uniqueList([...(Array.isArray(product.marketplaceSkus) ? product.marketplaceSkus : []), product.marketplaceSku]);
+  product.skus = uniqueList([
+    ...(Array.isArray(product.skus) ? product.skus : []),
+    ...product.marketplaceSkus,
+    ...product.supplierSkus,
+    ...product.internalCodes,
+    product.barcode,
+    product.qrCode
+  ]);
+  product.barcode = String(product.barcode || "").trim() || product.barcodes[0] || "";
+  product.supplierSku = String(product.supplierSku || "").trim() || product.supplierSkus[0] || "";
+  product.internalCode = String(product.internalCode || "").trim() || product.internalCodes[0] || "";
+  product.uktzed = String(product.uktzed || "").trim() || product.uktzeds[0] || "";
+  product.marketplaceSku = String(product.marketplaceSku || "").trim() || product.marketplaceSkus[0] || "";
+  return product;
+}
+
+function linkedParentList(parentType) {
+  if (parentType === "client") return state.clients || [];
+  if (parentType === "supplier") return state.settings?.suppliers || [];
+  if (parentType === "product") return state.products || [];
+  return [];
+}
+
+function linkedParentById(parentType, id) {
+  const value = String(id || "").trim();
+  if (!value) return null;
+  const nameField = LINKED_REQUISITE_DEFS[parentType]?.nameField || "name";
+  return linkedParentList(parentType).find((item) => item.id === value || item[nameField] === value) || null;
+}
+
+function linkedParentName(parentType, parent) {
+  if (parentType === "product") return productLabel(parent);
+  const nameField = LINKED_REQUISITE_DEFS[parentType]?.nameField || "name";
+  return parent?.[nameField] || parent?.name || "";
+}
+
+function linkedParentOptions(parentType, selectedId = "", placeholder = "Не обрано") {
+  const selected = String(selectedId || "");
+  return [
+    option("", placeholder, !selected),
+    ...linkedParentList(parentType).map((parent) => {
+      const label = linkedParentName(parentType, parent) || parent.id;
+      return option(parent.id, label, parent.id === selected || label === selected);
+    })
+  ].join("");
+}
+
+function linkedRequisiteDef(parentType, fieldKey) {
+  return LINKED_REQUISITE_DEFS[parentType]?.fields?.[fieldKey] || null;
+}
+
+function linkedRequisiteValues(parent, parentType, fieldKey) {
+  const field = linkedRequisiteDef(parentType, fieldKey);
+  if (!parent || !field) return [];
+  return uniqueList([...(Array.isArray(parent[fieldKey]) ? parent[fieldKey] : []), parent[field.single]]);
+}
+
+function linkedRequisiteIncludes(parent, parentType, fieldKey, value) {
+  const needle = normalizedText(value);
+  if (!needle) return false;
+  return linkedRequisiteValues(parent, parentType, fieldKey).some((item) => normalizedText(item) === needle);
+}
+
+function addLinkedRequisiteValue(parent, parentType, fieldKey, value) {
+  const field = linkedRequisiteDef(parentType, fieldKey);
+  const text = String(value || "").trim();
+  if (!parent || !field || !text) return false;
+  const values = uniqueList([...(Array.isArray(parent[fieldKey]) ? parent[fieldKey] : []), parent[field.single], text]);
+  parent[fieldKey] = values;
+  if (!String(parent[field.single] || "").trim()) parent[field.single] = text;
+  if (parentType === "client") parent.updatedAt = currentTimestamp();
+  if (parentType === "product" && fieldKey === "skus") {
+    parent.marketplaceSkus = uniqueList([...(Array.isArray(parent.marketplaceSkus) ? parent.marketplaceSkus : []), text]);
+    if (!String(parent.marketplaceSku || "").trim()) parent.marketplaceSku = text;
+  }
+  if (parentType === "product") normalizeProductRequisites(parent);
+  return true;
+}
+
 function loadState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : clone(seedState);
+    const raw = appLocalStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
   } catch (error) {
     console.warn("Cannot load state", error);
-    return clone(seedState);
+    return {};
   }
 }
 
@@ -1260,8 +2233,10 @@ function roleHasAdminAccess(roleItem) {
 
 function defaultRoleAccess(roleItem) {
   const admin = roleHasAdminAccess(roleItem);
-  const warehouseLead = roleItem.name === "Зав склад";
+  const warehouseLead = ["Зав склад", "Оператор складу"].includes(roleItem.name);
   const logistic = roleItem.name === "Логіст";
+  const roleName = String(roleItem.name || "").toLowerCase();
+  const marketplaceOperator = roleName.includes("маркетплейс") && !roleName.includes("аналітик");
   const views = Object.fromEntries(NAV.map(([id]) => {
     const allowed = admin
       || id === "dashboard"
@@ -1274,15 +2249,52 @@ function defaultRoleAccess(roleItem) {
       || !["reports", "settings", "roles", "integrations"].includes(id);
     return [id, Boolean(allowed)];
   }));
+  const subviews = Object.fromEntries(ROLE_SUBVIEW_PERMISSIONS.map(([key]) => {
+    const [viewId, subviewId] = key.split(":");
+    const viewAllowed = views[viewId] !== false;
+    const salesAllowed = viewId === "sales" && (
+      subviewId === "orders"
+      || subviewId === "retail"
+      || (subviewId === "warehouse" && (marketplaceOperator || warehouseLead || logistic))
+      || (subviewId === "logistics" && (marketplaceOperator || warehouseLead || logistic))
+      || (subviewId === "clients" && (marketplaceOperator || roleItem.canApproveCredit || roleItem.canViewReports))
+      || (subviewId === "communication" && (marketplaceOperator || roleItem.canApproveCredit))
+    );
+    const b2bAllowed = viewId === "b2b" && (
+      subviewId === "overview"
+      || (["requests", "storage"].includes(subviewId) && (marketplaceOperator || warehouseLead || roleItem.canApproveCredit || roleItem.canViewReports))
+      || (subviewId === "operations" && (marketplaceOperator || warehouseLead || roleItem.canApproveCredit))
+      || (subviewId === "cabinets" && (marketplaceOperator || roleItem.canApproveCredit || roleItem.canViewReports))
+    );
+    const financeAllowed = viewId === "finance" && (roleItem.canApproveCredit || roleItem.canViewReports);
+    const settingsAllowed = viewId === "settings" && (
+      (subviewId === "dataExchange" && (roleItem.canEditSettings || roleItem.canExportAccounting))
+      || (subviewId !== "dataExchange" && roleItem.canEditSettings)
+    );
+    const allowed = admin
+      || (viewAllowed && viewId === "products")
+      || (viewAllowed && salesAllowed)
+      || (viewAllowed && b2bAllowed)
+      || (viewAllowed && financeAllowed)
+      || (viewAllowed && settingsAllowed);
+    return [key, Boolean(allowed)];
+  }));
   const documents = Object.fromEntries(ROLE_DOCUMENT_PERMISSIONS.map(([key]) => {
     const allowed = admin
       || ["salesInvoice", "purchase", "productCard", "productEdit", "clientCard", "clientEdit", "marketplacePublication"].includes(key)
-      || (key === "marketplaceOrder" && (roleItem.canChangePrices || roleItem.canApproveCredit || warehouseLead || logistic))
-      || (key === "marketplaceStatus" && (roleItem.canApproveCredit || warehouseLead || logistic))
-      || (key === "deliveryTracking" && (warehouseLead || logistic))
-      || (key === "paymentTracking" && roleItem.canApproveCredit)
+      || (["marketplacePublicationEdit", "marketplaceOrder", "marketplaceOrderEdit", "marketplaceCommunication", "marketplaceCustomerQuestions", "marketplaceServiceThreads"].includes(key) && (marketplaceOperator || roleItem.canChangePrices || roleItem.canApproveCredit || warehouseLead || logistic))
+      || (key === "marketplaceStatus" && (marketplaceOperator || roleItem.canApproveCredit || warehouseLead || logistic))
+      || (key === "warehousePicking" && (marketplaceOperator || warehouseLead))
+      || (key === "warehouseHandover" && (marketplaceOperator || warehouseLead || logistic))
+      || (key === "logisticsAcceptance" && (marketplaceOperator || logistic))
+      || (key === "deliveryTracking" && (marketplaceOperator || warehouseLead || logistic))
+      || (key === "paymentTracking" && (marketplaceOperator || roleItem.canApproveCredit))
+      || (key === "dataExchange" && (roleItem.canEditSettings || roleItem.canExportAccounting))
+      || (marketplaceOperator && ["responsibleShipment", "b2bShipmentRequest", "b2bSaleReport"].includes(key))
       || (warehouseLead && ["purchase", "serialCorrection", "responsibleShipment", "b2bShipmentRequest"].includes(key))
       || (["payment", "payable", "b2bSaleReport", "responsibleShipment", "b2bShipmentRequest"].includes(key) && roleItem.canApproveCredit)
+      || (key === "novaPayApi" && (roleItem.canEditSettings || roleItem.canExportAccounting))
+      || (key === "novaPayReconciliation" && roleItem.canApproveCredit)
       || (key === "expense" && roleItem.canViewReports)
       || (key === "serialCorrection" && roleItem.canSellWeapon)
       || (key === "settingsDocument" && roleItem.canEditSettings);
@@ -1295,17 +2307,21 @@ function defaultRoleAccess(roleItem) {
   }));
   const fields = Object.fromEntries(ROLE_FIELD_PERMISSIONS.map(([key]) => {
     const allowed = admin
-      || !["price", "discount", "cost", "accounting", "permit", "serials", "payment", "due", "marketplace", "marketplaceStatus", "deliveryTracking", "paymentTracking"].includes(key)
+      || !["price", "discount", "cost", "accounting", "permit", "serials", "payment", "due", "marketplace", "marketplaceStatus", "warehouse", "logistics", "deliveryTracking", "paymentTracking", "novaPay", "dataExchangeScope"].includes(key)
       || (["price", "discount"].includes(key) && roleItem.canChangePrices)
       || (["permit", "serials"].includes(key) && roleItem.canSellWeapon)
       || (key === "accounting" && roleItem.canExportAccounting)
       || (["payment", "due"].includes(key) && roleItem.canApproveCredit)
-      || (key === "marketplace" && (roleItem.canEditSettings || roleItem.canChangePrices || logistic))
-      || (["marketplaceStatus", "deliveryTracking"].includes(key) && (warehouseLead || logistic))
-      || (key === "paymentTracking" && roleItem.canApproveCredit);
+      || (key === "marketplace" && (marketplaceOperator || roleItem.canEditSettings || roleItem.canChangePrices || logistic))
+      || (["marketplaceStatus", "deliveryTracking"].includes(key) && (marketplaceOperator || warehouseLead || logistic))
+      || (key === "warehouse" && (marketplaceOperator || warehouseLead || roleItem.canEditSettings))
+      || (key === "logistics" && (marketplaceOperator || warehouseLead || logistic || roleItem.canEditSettings))
+      || (key === "paymentTracking" && (marketplaceOperator || roleItem.canApproveCredit))
+      || (key === "novaPay" && (roleItem.canApproveCredit || roleItem.canEditSettings || roleItem.canExportAccounting))
+      || (key === "dataExchangeScope" && (roleItem.canEditSettings || roleItem.canExportAccounting));
     return [key, Boolean(allowed)];
   }));
-  return { views, documents, posted, fields };
+  return { views, subviews, documents, posted, fields };
 }
 
 function normalizeRole(roleItem) {
@@ -1324,6 +2340,7 @@ function normalizeRole(roleItem) {
   const defaults = defaultRoleAccess(base);
   base.access = {
     views: { ...defaults.views, ...(roleItem.access?.views || {}) },
+    subviews: { ...defaults.subviews, ...(roleItem.access?.subviews || {}) },
     documents: { ...defaults.documents, ...(roleItem.access?.documents || {}) },
     posted: { ...defaults.posted, ...(roleItem.access?.posted || {}) },
     fields: { ...defaults.fields, ...(roleItem.access?.fields || {}) }
@@ -1332,7 +2349,9 @@ function normalizeRole(roleItem) {
 }
 
 function defaultEmployeeLogin(employee, index) {
-  if (employee.login) return employee.login;
+  const currentLogin = String(employee.login || "").trim();
+  if (currentLogin && !/^emp-\d{3}$/i.test(currentLogin)) return currentLogin;
+  if (DEMO_EMPLOYEE_LOGINS[employee.id]) return DEMO_EMPLOYEE_LOGINS[employee.id];
   if (index === 0 || employee.roleName === "Адміністратор" || employee.roleName === "РђРґРјС–РЅС–СЃС‚СЂР°С‚РѕСЂ") return "admin";
   return employee.id || `emp-${String(index + 1).padStart(3, "0")}`;
 }
@@ -1422,34 +2441,334 @@ function recalculateInvoicePayments(next) {
   });
 }
 
-function normalizeMarketplaceOrder(order) {
+function normalizeSalesFunnel(items = []) {
+  const incoming = new Map((Array.isArray(items) ? items : []).map((item) => [item.id, item]));
+  return DEFAULT_SALES_FUNNEL.map((stage) => {
+    const saved = incoming.get(stage.id) || {};
+    const workflowRule = SALES_FUNNEL_WORKFLOW_RULES[stage.id] || {};
+    const slaHours = Number(saved.slaHours ?? stage.slaHours);
+    const className = SALES_FUNNEL_CLASS_OPTIONS.some(([value]) => value === saved.className) ? saved.className : stage.className;
+    return {
+      ...stage,
+      ...saved,
+      label: String(saved.label || stage.label).trim() || stage.label,
+      description: String(saved.description || SALES_FUNNEL_DESCRIPTIONS[stage.id] || stage.reminder || "").trim(),
+      menuLocation: String(saved.menuLocation || workflowRule.menuLocation || "Продажі → Замовлення").trim(),
+      entryCondition: String(saved.entryCondition || workflowRule.entryCondition || "").trim(),
+      completionCondition: String(saved.completionCondition || workflowRule.completionCondition || "").trim(),
+      switchBy: String(saved.switchBy || workflowRule.switchBy || "").trim(),
+      className,
+      slaHours: Number.isFinite(slaHours) && slaHours > 0 ? slaHours : stage.slaHours,
+      reminder: String(saved.reminder || stage.reminder).trim() || stage.reminder,
+      active: saved.active === false ? false : true
+    };
+  });
+}
+
+function normalizeMarketplaceOrderStatus(status = "") {
+  const raw = String(status || "new_order");
+  const normalized = MARKETPLACE_STATUS_ALIASES[raw] || raw;
+  return MARKETPLACE_ORDER_STATUS_MAP[normalized] ? normalized : "new_order";
+}
+
+function funnelDateKey(status) {
+  return {
+    new_order: "created",
+    in_progress: "inProgress",
+    waiting_client: "waitingClient",
+    confirmed_by_client: "agreed",
+    upsell: "upsell",
+    waiting_payment: "paymentWaiting",
+    paid: "paid",
+    picking: "warehouse",
+    picked: "picked",
+    shipped: "delivery",
+    delivered: "delivered",
+    completed: "completed",
+    follow_up: "aftersale",
+    repeat_sale: "repeat",
+    cancelled: "cancelled"
+  }[status] || "created";
+}
+
+function statusOrderIndex(status) {
+  const normalized = normalizeMarketplaceOrderStatus(status);
+  const index = DEFAULT_SALES_FUNNEL.findIndex((stage) => stage.id === normalized);
+  return index === -1 ? 0 : index;
+}
+
+function statusAtLeast(status, compareTo) {
+  return statusOrderIndex(status) >= statusOrderIndex(compareTo);
+}
+
+function dateToIso(dateString) {
+  const date = String(dateString || today).slice(0, 10);
+  return `${date}T09:00:00`;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function addHoursIso(isoString, hours) {
+  const date = new Date(isoString || nowIso());
+  date.setHours(date.getHours() + Number(hours || 0));
+  return date.toISOString();
+}
+
+function defaultFunnelNextAction(status) {
+  const stage = DEFAULT_SALES_FUNNEL.find((item) => item.id === normalizeMarketplaceOrderStatus(status)) || DEFAULT_SALES_FUNNEL[0];
+  return stage.reminder;
+}
+
+function normalizeMarketplaceWorkflow(order, status, dates) {
+  const existing = order.workflow || {};
+  const stage = normalizeMarketplaceOrderStatus(status);
+  const stageStartedAt = existing.stage === stage && existing.stageStartedAt
+    ? existing.stageStartedAt
+    : dateToIso(dates[funnelDateKey(stage)] || dates.created || order.date || today);
+  const rule = DEFAULT_SALES_FUNNEL.find((item) => item.id === stage) || DEFAULT_SALES_FUNNEL[0];
+  return {
+    ...(existing || {}),
+    acceptedAt: existing.acceptedAt || dateToIso(dates.created || order.date || today),
+    assignedAt: existing.assignedAt || existing.acceptedAt || dateToIso(dates.created || order.date || today),
+    stage,
+    stageStartedAt,
+    reminderAt: existing.stage === stage && existing.reminderAt ? existing.reminderAt : addHoursIso(stageStartedAt, rule.slaHours),
+    lastReminderAt: existing.lastReminderAt || "",
+    nextAction: existing.nextAction || defaultFunnelNextAction(stage),
+    upsellOfferedAt: existing.upsellOfferedAt || "",
+    aftersaleContactedAt: existing.aftersaleContactedAt || "",
+    repeatSalePlannedAt: existing.repeatSalePlannedAt || ""
+  };
+}
+
+function normalizeMarketplaceOrderLines(order = {}, products = []) {
+  const productList = Array.isArray(products) ? products : [];
+  const rawLines = Array.isArray(order.lines) && order.lines.length
+    ? order.lines
+    : [{
+      productId: order.productId || "",
+      sku: order.sku || "",
+      qty: order.qty || 1,
+      price: order.price || 0,
+      currency: order.currency || "UAH"
+    }];
+  return rawLines.map((line, index) => {
+    const product = byId(productList, line.productId || "");
+    const qty = Math.max(1, Number(line.qty || 1));
+    const price = parseDecimal(line.price ?? product?.price ?? order.price ?? 0, 0);
+    return {
+      id: line.id || `line-${index + 1}`,
+      productId: line.productId || product?.id || "",
+      sku: String(line.sku || productPrimarySku(product) || product?.id || "").trim(),
+      qty,
+      price,
+      currency: line.currency || order.currency || product?.currency || "UAH",
+      comment: line.comment || ""
+    };
+  }).filter((line) => line.productId || line.sku || Number(line.qty || 0) || Number(line.price || 0));
+}
+
+function syncMarketplaceOrderPrimaryLine(order, products = []) {
+  const lines = normalizeMarketplaceOrderLines(order, products);
+  const first = lines[0] || { productId: "", sku: "", qty: 1, price: 0, currency: order.currency || "UAH" };
+  order.lines = lines;
+  order.productId = first.productId || order.productId || "";
+  order.sku = first.sku || order.sku || "";
+  order.qty = Number(first.qty || 1);
+  order.price = Number(first.price || 0);
+  order.currency = first.currency || order.currency || "UAH";
+  return order;
+}
+
+function marketplaceOrderLines(order = {}) {
+  return normalizeMarketplaceOrderLines(order, state.products || []);
+}
+
+function marketplaceOrderLineTotal(line = {}, currency = "UAH") {
+  return convertMoney(Number(line.qty || 0) * Number(line.price || 0), line.currency || currency, currency || line.currency || "UAH");
+}
+
+function marketplaceOrderProductsSummary(order = {}) {
+  const lines = marketplaceOrderLines(order);
+  if (lines.length <= 1) return productName(order.productId || lines[0]?.productId || "");
+  const first = productName(lines[0]?.productId || order.productId || "");
+  return `${first} +${lines.length - 1}`;
+}
+
+function renderMarketplaceOrderProductSummary(order = {}) {
+  const lines = marketplaceOrderLines(order);
+  if (!lines.length) return escapeHtml(order.sku || "товар не знайдено");
+  const details = lines.map((line) => {
+    const sku = line.sku ? ` · ${escapeHtml(line.sku)}` : "";
+    const comment = line.comment ? ` · ${escapeHtml(line.comment)}` : "";
+    return `${escapeHtml(String(line.qty || "?"))} од. × ${formatMoney(line.price, line.currency || order.currency)}${sku}${comment}`;
+  }).join("<br>");
+  return `${escapeHtml(marketplaceOrderProductsSummary(order))}<br><span class="small muted">${details}</span>`;
+}
+
+function renderMarketplaceOrderLinesForm(order = {}) {
+  const lines = marketplaceOrderLines(order);
+  return `
+    <div class="field full order-lines-editor" data-marketplace-order-lines>
+      <span>Товари в замовленні / накладній</span>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead><tr><th>Товар</th><th>SKU</th><th>К-сть</th><th>Ціна</th><th>Валюта</th><th>Коментар</th><th class="no-print">Дії</th></tr></thead>
+          <tbody data-marketplace-order-lines-body>
+            ${lines.map((line, index) => renderMarketplaceOrderLineFormRow(line, index, lines.length)).join("")}
+          </tbody>
+        </table>
+      </div>
+      <button class="secondary" type="button" data-add-marketplace-order-line>Додати товар</button>
+      <span class="small muted">Перший рядок синхронізується зі старими полями товар/кількість/ціна для сумісності.</span>
+    </div>
+  `;
+}
+
+function renderMarketplaceOrderLineFormRow(line = {}, index = 0, totalLines = 1) {
+  return `
+    <tr data-marketplace-order-line>
+      <td><select name="lineProductId" data-linked-parent="product" data-linked-parent-scope="row">${state.products.map((product) => option(product.id, `${product.brand} ${product.model}`, product.id === line.productId)).join("")}</select></td>
+      <td>
+        <div class="input-action">
+          <input name="lineSku" data-skip-suggestions data-linked-requisite="product" data-linked-parent-field="lineProductId" data-linked-parent-scope="row" data-requisite-field="skus" data-requisite-label="SKU товару" value="${escapeHtml(line.sku || "")}" placeholder="SKU">
+          <button class="ghost" type="button" data-add-linked-requisite data-linked-parent-scope="row" data-target-name="lineSku" title="Додати SKU до товару">+</button>
+        </div>
+      </td>
+      <td><input name="lineQty" type="number" min="1" value="${escapeHtml(line.qty || 1)}"></td>
+      <td><input name="linePrice" inputmode="decimal" value="${escapeHtml(line.price || 0)}"></td>
+      <td><select name="lineCurrency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === (line.currency || "UAH"))).join("")}</select></td>
+      <td><input name="lineComment" value="${escapeHtml(line.comment || "")}" placeholder="апсел / уточнення"></td>
+      <td class="row-actions no-print"><button class="ghost" type="button" data-remove-marketplace-order-line ${totalLines <= 1 ? "disabled" : ""}>×</button></td>
+    </tr>
+  `;
+}
+
+function collectMarketplaceOrderLinesFromForm(form) {
+  const rows = [...form.querySelectorAll("[data-marketplace-order-line]")];
+  const lines = rows.map((row, index) => {
+    const productId = row.querySelector('[name="lineProductId"]')?.value || "";
+    const product = byId(state.products, productId);
+    return {
+      id: `line-${index + 1}`,
+      productId,
+      sku: row.querySelector('[name="lineSku"]')?.value || productPrimarySku(product) || productId,
+      qty: Math.max(1, Number(row.querySelector('[name="lineQty"]')?.value || 1)),
+      price: parseDecimal(row.querySelector('[name="linePrice"]')?.value, product?.price || 0),
+      currency: row.querySelector('[name="lineCurrency"]')?.value || product?.currency || "UAH",
+      comment: row.querySelector('[name="lineComment"]')?.value || ""
+    };
+  }).filter((line) => line.productId);
+  return lines.length ? lines : [];
+}
+
+function marketplaceOrderDefaultLine(product = state.products[0]) {
+  const price = product?.id ? productSalePrice(product, marketplacePriceTypeId()) : { amount: 0, currency: "UAH" };
+  return {
+    id: `line-${Date.now()}`,
+    productId: product?.id || "",
+    sku: productPrimarySku(product) || product?.id || "",
+    qty: 1,
+    price: price.amount || product?.price || 0,
+    currency: price.currency || product?.currency || "UAH",
+    comment: ""
+  };
+}
+
+function updateMarketplaceOrderLineRemoveButtons(root = document) {
+  const rows = [...root.querySelectorAll("[data-marketplace-order-line]")];
+  rows.forEach((row, index) => {
+    const button = row.querySelector("[data-remove-marketplace-order-line]");
+    if (button) button.disabled = rows.length <= 1;
+    const idInput = row.querySelector('[name="lineId"]');
+    if (idInput) idInput.value = `line-${index + 1}`;
+  });
+}
+
+function addMarketplaceOrderLineToForm(form) {
+  const body = form?.querySelector("[data-marketplace-order-lines-body]");
+  if (!body) return;
+  const rows = body.querySelectorAll("[data-marketplace-order-line]");
+  body.insertAdjacentHTML("beforeend", renderMarketplaceOrderLineFormRow(marketplaceOrderDefaultLine(), rows.length, rows.length + 1));
+  const row = body.lastElementChild || body;
+  attachLinkedRequisiteInputs(row);
+  prepareDecimalInputs(row);
+  updateMarketplaceOrderLineRemoveButtons(form);
+}
+
+function removeMarketplaceOrderLineFromButton(button) {
+  const form = button.closest("form");
+  const rows = [...form?.querySelectorAll("[data-marketplace-order-line]") || []];
+  if (rows.length <= 1) return;
+  button.closest("[data-marketplace-order-line]")?.remove();
+  updateMarketplaceOrderLineRemoveButtons(form);
+}
+
+function syncMarketplaceOrderLineProduct(select) {
+  const row = select.closest("[data-marketplace-order-line]");
+  const product = byId(state.products, select.value);
+  if (!row || !product) return;
+  const skuInput = row.querySelector('[name="lineSku"]');
+  const priceInput = row.querySelector('[name="linePrice"]');
+  const currencySelect = row.querySelector('[name="lineCurrency"]');
+  const price = productSalePrice(product, marketplacePriceTypeId());
+  if (skuInput && !String(skuInput.value || "").trim()) skuInput.value = productPrimarySku(product) || product.id;
+  if (priceInput) priceInput.value = price.amount || product.price || 0;
+  if (currencySelect) currencySelect.value = price.currency || product.currency || "UAH";
+}
+
+function normalizeMarketplaceOrder(order, products = []) {
+  order = syncMarketplaceOrderPrimaryLine({ ...order }, products);
   const date = order.date || order.dates?.created || today;
   const qty = Number(order.qty || 1);
   const price = parseDecimal(order.price, 0);
-  let status = order.status || "new_order";
-  if (status === "invoiced") status = "sent_to_warehouse";
+  const orderTotal = Array.isArray(order.lines) && order.lines.length
+    ? order.lines.reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.price || 0), 0)
+    : price * qty;
+  let status = normalizeMarketplaceOrderStatus(order.status || "new_order");
   const paymentStatus = status === "paid" || order.payment?.status === "paid" ? "paid" : order.payment?.status || "expected";
-  if (paymentStatus === "paid") status = "paid";
+  if (paymentStatus === "paid" && !["paid", "picking", "picked", "shipped", "delivered", "completed", "follow_up", "repeat_sale", "cancelled"].includes(status)) status = "paid";
 
   const dates = {
     created: date,
+    inProgress: "",
+    waitingClient: "",
     agreed: "",
+    paymentWaiting: "",
     warehouse: "",
+    picked: "",
     delivery: "",
     delivered: "",
+    completed: "",
     paid: "",
+    upsell: "",
+    aftersale: "",
+    repeat: "",
+    cancelled: "",
     ...(order.dates || {})
   };
-  if (["agreed", "sent_to_warehouse", "sent_to_delivery", "delivered", "paid"].includes(status) && !dates.agreed) dates.agreed = date;
-  if (["sent_to_warehouse", "sent_to_delivery", "delivered", "paid"].includes(status) && !dates.warehouse) dates.warehouse = date;
-  if (["sent_to_delivery", "delivered", "paid"].includes(status) && !dates.delivery) dates.delivery = date;
-  if (["delivered", "paid"].includes(status) && !dates.delivered) dates.delivered = date;
-  if (status === "paid" && !dates.paid) dates.paid = order.payment?.paidAt || today;
+  const activeFlow = status !== "cancelled";
+  if (activeFlow && statusAtLeast(status, "in_progress") && !dates.inProgress) dates.inProgress = date;
+  if (activeFlow && statusAtLeast(status, "waiting_client") && !dates.waitingClient) dates.waitingClient = date;
+  if (activeFlow && statusAtLeast(status, "confirmed_by_client") && !dates.agreed) dates.agreed = date;
+  if (activeFlow && statusAtLeast(status, "upsell") && !dates.upsell) dates.upsell = date;
+  if (activeFlow && statusAtLeast(status, "waiting_payment") && !dates.paymentWaiting) dates.paymentWaiting = date;
+  if (activeFlow && statusAtLeast(status, "paid") && !dates.paid) dates.paid = order.payment?.paidAt || today;
+  if (activeFlow && statusAtLeast(status, "picking") && !dates.warehouse) dates.warehouse = date;
+  if (activeFlow && statusAtLeast(status, "picked") && !dates.picked) dates.picked = date;
+  if (activeFlow && statusAtLeast(status, "shipped") && !dates.delivery) dates.delivery = date;
+  if (activeFlow && statusAtLeast(status, "delivered") && !dates.delivered) dates.delivered = date;
+  if (activeFlow && statusAtLeast(status, "completed") && !dates.completed) dates.completed = date;
+  if (activeFlow && statusAtLeast(status, "follow_up") && !dates.aftersale) dates.aftersale = date;
+  if (status === "repeat_sale" && !dates.repeat) dates.repeat = date;
+  if (status === "cancelled" && !dates.cancelled) dates.cancelled = date;
 
-  const deliveryStatus = order.delivery?.status || (status === "delivered" || status === "paid" ? "delivered" : status === "sent_to_delivery" ? "sent_to_delivery" : "new");
+  const deliveryStatus = order.delivery?.status || (["delivered", "completed", "follow_up", "repeat_sale"].includes(status) ? "delivered" : status === "shipped" ? "sent_to_delivery" : ["picking", "picked"].includes(status) ? "sent_to_warehouse" : "new");
   const payment = {
     method: "Маркетплейс",
-    amount: price * qty,
+    amount: orderTotal,
     source: `${order.marketplace || "Marketplace"}Pay`,
     apiStatus: paymentStatus === "paid" ? "Оплата підтверджена API" : "Очікує підтягування оплати",
     lastCheck: "",
@@ -1462,7 +2781,7 @@ function normalizeMarketplaceOrder(order) {
     date,
     status,
     dates,
-    warehouseStatus: order.warehouseStatus || (["sent_to_warehouse", "sent_to_delivery", "delivered", "paid"].includes(status) ? "reserved" : "new"),
+    warehouseStatus: order.warehouseStatus || (activeFlow && statusAtLeast(status, "picking") ? "reserved" : "new"),
     buyer: {
       name: "",
       phone: "",
@@ -1481,15 +2800,52 @@ function normalizeMarketplaceOrder(order) {
       lastCheck: "",
       ...(order.delivery || {})
     },
-    payment
+    payment,
+    workflow: normalizeMarketplaceWorkflow(order, status, dates)
   };
 }
 
-function normalizeState(loaded) {
+function normalizeState(loaded = {}) {
   const next = { ...clone(seedState), ...loaded };
   next.settings = { ...clone(seedState.settings), ...(loaded.settings || {}) };
   next.settings.rates = normalizeExchangeRates(next.settings.rates);
   next.settings.priceTypes = normalizePriceTypes(next.settings.priceTypes);
+  next.settings.dataExchange = {
+    ...clone(seedState.settings.dataExchange),
+    ...(loaded.settings?.dataExchange || {})
+  };
+  next.settings.externalSync = externalSyncDefaults(loadedProfileMatchesCurrent(loaded) ? (loaded.settings?.externalSync || next.settings.externalSync || {}) : {});
+  next.settings.novaPay = {
+    ...clone(seedState.settings.novaPay),
+    ...(loaded.settings?.novaPay || {})
+  };
+  next.settings.deliveryApi = {
+    ...clone(seedState.settings.deliveryApi || {}),
+    ...(loaded.settings?.deliveryApi || {}),
+    nova_poshta: novaPoshtaServerGatewaySettings(loaded.settings?.deliveryApi?.nova_poshta)
+  };
+  next.settings.marketplaceSync = {
+    ...clone(seedState.settings.marketplaceSync),
+    ...(loaded.settings?.marketplaceSync || {})
+  };
+  next.settings.salesFunnel = normalizeSalesFunnel(loaded.settings?.salesFunnel || next.settings.salesFunnel);
+  next.settings.communicators = {
+    ...clone(seedState.settings.communicators),
+    ...(loaded.settings?.communicators || {}),
+    viber: {
+      ...clone(seedState.settings.communicators.viber),
+      ...(loaded.settings?.communicators?.viber || {})
+    },
+    callRecording: {
+      ...clone(seedState.settings.communicators.callRecording),
+      ...(loaded.settings?.communicators?.callRecording || {})
+    }
+  };
+  next.clientLogPreview = {
+    ...clone(seedState.clientLogPreview),
+    ...(loaded.clientLogPreview || {}),
+    rows: Array.isArray(loaded.clientLogPreview?.rows) ? loaded.clientLogPreview.rows.slice(0, 50) : []
+  };
   const loadedRoles = loaded.roles && loaded.roles.length ? loaded.roles : [];
   const roles = loadedRoles.length
     ? [...loadedRoles, ...seedState.roles.filter((seedRole) => !loadedRoles.some((loadedRole) => loadedRole.name === seedRole.name))]
@@ -1499,7 +2855,7 @@ function normalizeState(loaded) {
   const generatedEmployees = (loaded.managers || seedState.managers).map((name, index) => ({
       id: `emp-${String(index + 1).padStart(3, "0")}`,
       name,
-      roleName: index === 0 ? "Адміністратор" : "Менеджер магазину",
+    roleName: index === 0 ? "Адміністратор" : "Менеджер маркетплейсів",
       department: index === 0 ? "Адміністрація" : "Продажі",
       phone: "",
       email: "",
@@ -1514,7 +2870,7 @@ function normalizeState(loaded) {
     email: "",
     active: true,
     ...employee,
-    roleName: employee.id === "emp-004" && employee.department === "Склад" && employee.roleName === "Менеджер магазину" ? "Зав склад" : employee.roleName,
+    roleName: employee.id === "emp-004" && employee.department === "Склад" && employee.roleName === "Менеджер магазину" ? "Оператор складу" : employee.roleName,
     login: defaultEmployeeLogin(employee, index),
     password: employee.password || (index === 0 ? "admin" : "1234")
   }));
@@ -1523,13 +2879,13 @@ function normalizeState(loaded) {
   next.currentManager = activeEmployee?.name || loaded.currentManager || "Адміністратор";
   next.currentRole = activeEmployee?.roleName || loaded.currentRole || "Адміністратор";
   next.managers = next.employees.filter((employee) => employee.active).map((employee) => employee.name);
-  next.warehouses = (loaded.warehouses || seedState.warehouses).map((warehouse) => ({
+  next.warehouses = cleanLoadedDataRows(loaded, "warehouses").map((warehouse) => ({
     clientId: "",
     ...warehouse
   }));
   next.settings.suppliers = (loaded.settings?.suppliers && loaded.settings.suppliers.length)
-    ? loaded.settings.suppliers.map((supplier) => ({ edrpou: "", phone: "", email: "", ...supplier }))
-    : seedState.settings.suppliers;
+    ? loaded.settings.suppliers.map((supplier) => normalizeSupplierRequisites({ edrpou: "", phone: "", email: "", address: "", phones: [], emails: [], edrpous: [], addresses: [], ...supplier }))
+    : seedState.settings.suppliers.map((supplier) => normalizeSupplierRequisites({ edrpou: "", phone: "", email: "", address: "", phones: [], emails: [], edrpous: [], addresses: [], ...supplier }));
   next.settings.paymentTerminals = (loaded.settings?.paymentTerminals && loaded.settings.paymentTerminals.length)
     ? loaded.settings.paymentTerminals.map((terminal) => ({ provider: "", firmId: next.settings.firms[0]?.id || "", ...terminal }))
     : seedState.settings.paymentTerminals;
@@ -1540,24 +2896,51 @@ function normalizeState(loaded) {
   next.settings.catalogParameters = normalizeCatalogParameters(next.settings);
   next.settings.variantDictionaries = normalizeVariantDictionaries(next.settings);
   syncLegacyVariantDictionaries(next.settings);
-  next.clients = (loaded.clients || seedState.clients).map((client, index) => ({
+  next.clients = cleanLoadedDataRows(loaded, "clients").map((client, index) => ({
     edrpou: "",
     phone: "",
     email: "",
+    phones: [],
+    emails: [],
+    edrpous: [],
+    addresses: [],
     priceType: "Роздріб",
     currency: "UAH",
     taxMode: "без ПДВ",
     responsibleStorage: false,
     address: "",
+    sourceType: "crm",
+    sourceName: "",
+    sourceText: "",
+    sourceOrderId: "",
+    sourceFile: "",
+    counterpartyCode: "",
+    externalId: "",
+    oneCRef: "",
+    createdFrom: "",
+    createdAt: "",
+    updatedAt: "",
+    importedAt: "",
+    sources: [],
     ...client
   })).map((client, index) => {
+    if (client.type === "B2B") client.type = "Marketplace";
     const priceType = next.settings.priceTypes.find((item) => item.id === client.priceType || item.name === client.priceType);
     client.priceType = priceType?.id || next.settings.priceTypes.find((item) => item.kind !== "cost" && item.active !== false)?.id || client.priceType;
-    client.portalLogin = defaultClientLogin(client, index);
-    client.portalPassword = client.portalPassword || (client.id === "c-001" ? "tactic" : client.id === "c-002" ? "strilets" : "1234");
-    return client;
+    if (client.type === "Marketplace") {
+      client.cabinetEnabled = false;
+      client.responsibleStorage = false;
+      client.portalLogin = "";
+      client.portalPassword = "";
+    } else if (client.cabinetEnabled) {
+      client.portalLogin = client.portalLogin || defaultClientLogin(client, index);
+      client.portalPassword = client.portalPassword || "1234";
+    }
+    client.sources = normalizeClientSources(client);
+    client.sourceText = clientSourceLabel(client);
+    return normalizeClientRequisites(client);
   });
-  next.products = (loaded.products || seedState.products).map((product) => ({
+  next.products = cleanLoadedDataRows(loaded, "products").map((product) => ({
     category: product.type === "weapon" ? "Зброя" : "Аксесуари",
     unit: "шт",
     minStock: 0,
@@ -1565,25 +2948,32 @@ function normalizeState(loaded) {
     description: "",
     catalogTag: "",
     photos: [],
+    barcodes: [],
+    supplierSkus: [],
+    internalCodes: [],
+    uktzeds: [],
+    marketplaceSkus: [],
+    skus: [],
     ...product
   })).map((product) => {
+    product.brand = cleanImportedSourceBrand(product.brand);
     product.prices = normalizeProductPrices(product, next.settings.priceTypes);
     const retail = product.prices.retail || Object.values(product.prices)[0] || {};
     product.price = parseDecimal(retail.amount ?? product.price, 0);
     product.currency = retail.currency || product.currency || "UAH";
-    return product;
+    return normalizeProductRequisites(product);
   });
   seedProductDictionaries(next);
   syncCatalogParametersFromProducts(next);
-  const purchaseRows = loaded.purchases || seedState.purchases;
-  next.serials = (loaded.serials || seedState.serials).map((serial) => ({
+  const purchaseRows = cleanLoadedDataRows(loaded, "purchases");
+  next.serials = cleanLoadedDataRows(loaded, "serials").map((serial) => ({
     actual: true,
     basSynced: false,
     purchaseId: "",
     ...serial,
     firmId: serial.firmId || purchaseRows.find((purchase) => purchase.id === serial.purchaseId)?.firmId || "vat"
   }));
-  const invoiceRows = loaded.invoices || seedState.invoices;
+  const invoiceRows = cleanLoadedDataRows(loaded, "invoices");
   next.invoices = invoiceRows.map((invoice) => {
     const normalized = {
       lines: [],
@@ -1615,12 +3005,13 @@ function normalizeState(loaded) {
       }
     });
   });
-  next.expenses = loaded.expenses || seedState.expenses;
-  next.payables = loaded.payables || seedState.payables;
+  next.payments = cleanLoadedDataRows(loaded, "payments");
+  next.expenses = cleanLoadedDataRows(loaded, "expenses");
+  next.payables = cleanLoadedDataRows(loaded, "payables");
   next.purchases = purchaseRows;
-  next.stock = normalizeStockRows(loaded.stock || seedState.stock, next);
-  next.responsibleStorageDocs = loaded.responsibleStorageDocs || seedState.responsibleStorageDocs;
-  next.b2bShipmentRequests = (loaded.b2bShipmentRequests || seedState.b2bShipmentRequests || []).map((request, index) => ({
+  next.stock = normalizeStockRows(cleanLoadedDataRows(loaded, "stock"), next);
+  next.responsibleStorageDocs = cleanLoadedDataRows(loaded, "responsibleStorageDocs");
+  next.b2bShipmentRequests = cleanLoadedDataRows(loaded, "b2bShipmentRequests").map((request, index) => ({
     id: request.id || `req-${String(index + 1).padStart(3, "0")}`,
     date: request.date || today,
     desiredDate: request.desiredDate || "",
@@ -1641,21 +3032,54 @@ function normalizeState(loaded) {
     responsibleDocId: request.responsibleDocId || "",
     validation: Array.isArray(request.validation) ? request.validation : []
   }));
-  next.salesPlans = loaded.salesPlans || seedState.salesPlans;
-  next.marketplaceStats = loaded.marketplaceStats || seedState.marketplaceStats;
-  next.marketplacePublications = loaded.marketplacePublications || seedState.marketplacePublications;
-  next.marketplaceOrders = (loaded.marketplaceOrders || seedState.marketplaceOrders).map(normalizeMarketplaceOrder);
+  next.salesPlans = cleanLoadedDataRows(loaded, "salesPlans");
+  next.marketplaceStats = cleanLoadedDataRows(loaded, "marketplaceStats");
+  next.marketplacePublications = cleanLoadedDataRows(loaded, "marketplacePublications");
+  next.marketplaceOrders = cleanLoadedDataRows(loaded, "marketplaceOrders").map((order) => normalizeMarketplaceOrder(order, next.products));
+  const demoNovaPayOrder = next.marketplaceOrders.find((order) => order.id === "mpo-001");
+  if (demoNovaPayOrder && !demoNovaPayOrder.delivery?.ttn) {
+    demoNovaPayOrder.delivery = {
+      ...(demoNovaPayOrder.delivery || {}),
+      ttn: "NP-590010333",
+      status: demoNovaPayOrder.delivery?.status === "new" ? "in_transit" : demoNovaPayOrder.delivery?.status,
+      apiStatus: demoNovaPayOrder.delivery?.apiStatus || "ТТН передано до NovaPay-звірки"
+    };
+    if (normalizeMarketplaceOrderStatus(demoNovaPayOrder.status) === "new_order") {
+      demoNovaPayOrder.status = "waiting_payment";
+      demoNovaPayOrder.dates = {
+        ...(demoNovaPayOrder.dates || {}),
+        paymentWaiting: demoNovaPayOrder.dates?.paymentWaiting || today
+      };
+    }
+  }
+  next.novaPayTransactions = cleanLoadedDataRows(loaded, "novaPayTransactions")
+    .map((transaction, index) => normalizeNovaPayTransaction(transaction, index))
+    .filter((transaction) => !isNovaPayTechnicalEmptyTransaction(transaction));
+  next.novaPoshtaDocuments = cleanLoadedDataRows(loaded, "novaPoshtaDocuments")
+    .map((document, index) => normalizeNovaPoshtaDocument(document, index));
+  next.viberMessages = cleanLoadedDataRows(loaded, "viberMessages");
+  next.communicationEvents = cleanLoadedDataRows(loaded, "communicationEvents");
+  next.marketplaceCustomerQuestions = cleanLoadedDataRows(loaded, "marketplaceCustomerQuestions");
+  next.marketplaceServiceThreads = cleanLoadedDataRows(loaded, "marketplaceServiceThreads");
+  next.marketplaceMessageTemplates = Array.isArray(loaded.marketplaceMessageTemplates) ? loaded.marketplaceMessageTemplates : clone(seedState.marketplaceMessageTemplates);
+  next.callRecordings = cleanLoadedDataRows(loaded, "callRecordings");
   next.reportBuilder = { ...clone(seedState.reportBuilder), ...(loaded.reportBuilder || {}) };
   next.periodFilters = { ...clone(seedState.periodFilters), ...(loaded.periodFilters || {}) };
+  next.smartListPreferences = loaded.smartListPreferences || {};
   next.marketplaceOrderFilters = { ...clone(seedState.marketplaceOrderFilters), ...(loaded.marketplaceOrderFilters || {}) };
+  next.marketplaceCommunicationFilters = { ...clone(seedState.marketplaceCommunicationFilters), ...(loaded.marketplaceCommunicationFilters || {}) };
+  next.marketplaceFunnelManager = loaded.marketplaceFunnelManager || seedState.marketplaceFunnelManager || "";
   next.marketplacePublicationFilters = { ...clone(seedState.marketplacePublicationFilters), ...(loaded.marketplacePublicationFilters || {}) };
+  next.salesClientFilters = { ...clone(seedState.salesClientFilters), ...(loaded.salesClientFilters || {}) };
+  next.productTableFilters = { ...clone(seedState.productTableFilters), ...(loaded.productTableFilters || {}) };
   next.b2bShipmentRequestFilters = { ...clone(seedState.b2bShipmentRequestFilters), ...(loaded.b2bShipmentRequestFilters || {}) };
   next.b2bResponsibleStorageFilters = { ...clone(seedState.b2bResponsibleStorageFilters), ...(loaded.b2bResponsibleStorageFilters || {}) };
   next.rozetkaImportedOrderFilters = { ...clone(seedState.rozetkaImportedOrderFilters), ...(loaded.rozetkaImportedOrderFilters || {}) };
-  next.rozetkaInbound = { ...clone(seedState.rozetkaInbound), ...(loaded.rozetkaInbound || {}) };
+  next.rozetkaInbound = { ...clone(seedState.rozetkaInbound), ...(loadedProfileMatchesCurrent(loaded) ? (loaded.rozetkaInbound || {}) : {}) };
   next.inventoryFilters = { ...clone(seedState.inventoryFilters), ...(loaded.inventoryFilters || {}) };
   normalizePaymentRates(next);
   recalculateInvoicePayments(next);
+  next.dataProfile = APP_DATA_PROFILE;
   return next;
 }
 
@@ -1698,7 +3122,7 @@ function syncCatalogParametersFromProducts(next) {
 
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    appLocalStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (error) {
     console.warn("Cannot save state", error);
   }
@@ -1710,7 +3134,11 @@ function byId(list, id) {
 
 function productName(id) {
   const product = byId(state.products, id);
-  return product ? `${product.brand} ${product.model}` : "Невідомий товар";
+  return product ? productLabel(product) : "Невідомий товар";
+}
+
+function productLabel(product) {
+  return [product?.brand, product?.model].filter(Boolean).join(" ").trim() || product?.name || product?.title || product?.id || "";
 }
 
 function clientName(id) {
@@ -1797,7 +3225,26 @@ function firmName(id) {
 }
 
 function currentEmployee() {
+  if (!Array.isArray(state.employees) || !state.employees.length) {
+    state.employees = clone(seedState.employees || []);
+  }
   return state.employees.find((employee) => employee.id === state.currentEmployeeId) || state.employees[0];
+}
+
+function ensureSessionDefaults() {
+  if (!Array.isArray(state.roles) || !state.roles.length) {
+    state.roles = clone(seedState.roles || []);
+  }
+  if (!Array.isArray(state.employees) || !state.employees.length) {
+    state.employees = clone(seedState.employees || []);
+  }
+  if (!state.currentEmployeeId || !state.employees.some((employee) => employee.id === state.currentEmployeeId && employee.active !== false)) {
+    state.currentEmployeeId = state.employees.find((employee) => employee.active !== false)?.id || state.employees[0]?.id || "";
+  }
+  const employee = currentEmployee();
+  state.currentManager = employee?.name || state.currentManager || seedState.currentManager || "Адміністратор";
+  state.currentRole = employee?.roleName || state.currentRole || seedState.currentRole || "Адміністратор";
+  state.managers = state.employees.filter((employeeItem) => employeeItem.active !== false).map((employeeItem) => employeeItem.name);
 }
 
 function authenticatedEmployee() {
@@ -1824,9 +3271,9 @@ function activateEmployeeSession(employee) {
   authEmployeeId = employee.id;
   authClientId = "";
   authMode = "employee";
-  sessionStorage.setItem("arms-crm-auth-employee-id", employee.id);
-  sessionStorage.removeItem("arms-crm-auth-client-id");
-  sessionStorage.setItem("arms-crm-auth-mode", "employee");
+  appSessionStorage.setItem("arms-crm-auth-employee-id", employee.id);
+  appSessionStorage.removeItem("arms-crm-auth-client-id");
+  appSessionStorage.setItem("arms-crm-auth-mode", "employee");
   state.currentEmployeeId = employee.id;
   state.currentManager = employee.name;
   state.currentRole = employee.roleName;
@@ -1836,15 +3283,16 @@ function activateClientSession(client) {
   authClientId = client.id;
   authEmployeeId = "";
   authMode = "client";
-  sessionStorage.setItem("arms-crm-auth-client-id", client.id);
-  sessionStorage.removeItem("arms-crm-auth-employee-id");
-  sessionStorage.setItem("arms-crm-auth-mode", "client");
+  appSessionStorage.setItem("arms-crm-auth-client-id", client.id);
+  appSessionStorage.removeItem("arms-crm-auth-employee-id");
+  appSessionStorage.setItem("arms-crm-auth-mode", "client");
 }
 
 function role() {
+  ensureSessionDefaults();
   const employee = currentEmployee();
   const roleName = employee?.roleName || state.currentRole;
-  return state.roles.find((item) => item.name === roleName) || state.roles[0];
+  return state.roles.find((item) => item.name === roleName) || state.roles[0] || clone(seedState.roles?.[0] || { name: "Адміністратор", canManageUsers: true, access: { views: {}, subviews: {}, documents: {}, fields: {}, posted: {} } });
 }
 
 function isAdmin() {
@@ -1853,6 +3301,16 @@ function isAdmin() {
 
 function canAccessView(viewId) {
   return roleHasAdminAccess(role()) || role().access?.views?.[viewId] !== false || viewId === "dashboard";
+}
+
+function subviewPermissionKey(viewId, subviewId) {
+  return `${viewId}:${subviewId}`;
+}
+
+function canAccessSubview(viewId, subviewId) {
+  const key = subviewPermissionKey(viewId, subviewId);
+  const managed = ROLE_SUBVIEW_PERMISSIONS.some(([permissionKey]) => permissionKey === key);
+  return !managed || roleHasAdminAccess(role()) || role().access?.subviews?.[key] !== false;
 }
 
 function canCreateDocument(documentKey) {
@@ -1925,9 +3383,22 @@ function resolveDictionaryValue(key, selected, fresh, label, config = {}) {
 function findProductByCode(code) {
   const normalized = String(code || "").trim().toLowerCase();
   if (!normalized) return null;
-  return state.products.find((product) => [product.barcode, product.qrCode, product.supplierSku, product.internalCode]
-    .filter(Boolean)
-    .some((value) => String(value).trim().toLowerCase() === normalized));
+  return state.products.find((product) => [
+    ...linkedRequisiteValues(product, "product", "barcodes"),
+    ...linkedRequisiteValues(product, "product", "supplierSkus"),
+    ...linkedRequisiteValues(product, "product", "internalCodes"),
+    ...linkedRequisiteValues(product, "product", "marketplaceSkus"),
+    ...linkedRequisiteValues(product, "product", "skus"),
+    product.qrCode
+  ].filter(Boolean).some((value) => String(value).trim().toLowerCase() === normalized));
+}
+
+function productPrimarySku(product) {
+  return linkedRequisiteValues(product, "product", "skus")[0] || product?.marketplaceSku || product?.supplierSku || product?.internalCode || product?.barcode || "";
+}
+
+function productPrimaryBarcode(product) {
+  return linkedRequisiteValues(product, "product", "barcodes")[0] || product?.barcode || product?.qrCode || "";
 }
 
 function normalizedText(value) {
@@ -2444,7 +3915,7 @@ function resolveSupplier(raw) {
     if (!name) throw new Error("Вкажіть назву нового постачальника.");
     let supplier = state.settings.suppliers.find((item) => item.name.toLowerCase() === name.toLowerCase());
     if (!supplier) {
-      supplier = { id: uniqueId("sup"), name, edrpou: "", phone: "", email: "" };
+      supplier = normalizeSupplierRequisites({ id: uniqueId("sup"), name, edrpou: "", phone: "", email: "", address: "", phones: [], emails: [], edrpous: [], addresses: [] });
       state.settings.suppliers.push(supplier);
     }
     return supplier.name;
@@ -2453,9 +3924,20 @@ function resolveSupplier(raw) {
   const name = String(raw.supplier || "").trim();
   if (!name) throw new Error("Вкажіть постачальника.");
   if (!state.settings.suppliers.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
-    state.settings.suppliers.push({ id: uniqueId("sup"), name, edrpou: "", phone: "", email: "" });
+    state.settings.suppliers.push(normalizeSupplierRequisites({ id: uniqueId("sup"), name, edrpou: "", phone: "", email: "", address: "", phones: [], emails: [], edrpous: [], addresses: [] }));
   }
   return name;
+}
+
+function ensureSupplierRecord(name) {
+  const value = String(name || "").trim();
+  if (!value) return null;
+  let supplier = state.settings.suppliers.find((item) => normalizedText(item.name) === normalizedText(value));
+  if (!supplier) {
+    supplier = normalizeSupplierRequisites({ id: uniqueId("sup"), name: value, edrpou: "", phone: "", email: "", address: "", phones: [], emails: [], edrpous: [], addresses: [] });
+    state.settings.suppliers.push(supplier);
+  }
+  return supplier;
 }
 
 function isLocked(date, locked) {
@@ -2516,6 +3998,14 @@ function dateInOptionalPeriod(date, period) {
   return (!period.from || value >= period.from) && (!period.to || value <= period.to);
 }
 
+function dateInSingleAwarePeriod(date, period) {
+  if (!date) return true;
+  const value = String(date).slice(0, 10);
+  if (period.from && !period.to) return value === period.from;
+  if (!period.from && period.to) return value === period.to;
+  return (!period.from || value >= period.from) && (!period.to || value <= period.to);
+}
+
 function marketplaceOrderFilter() {
   const filter = state.marketplaceOrderFilters || {};
   return {
@@ -2523,6 +4013,24 @@ function marketplaceOrderFilter() {
     to: filter.to || "",
     status: filter.status || "",
     marketplace: filter.marketplace || "",
+    expanded: Boolean(filter.expanded)
+  };
+}
+
+function marketplaceCommunicationFilter() {
+  const filter = state.marketplaceCommunicationFilters || {};
+  return {
+    questionType: filter.questionType || "order_question"
+  };
+}
+
+function salesClientFilter() {
+  const filter = state.salesClientFilters || {};
+  return {
+    search: filter.search || "",
+    source: filter.source || "",
+    from: filter.from || "",
+    to: filter.to || "",
     expanded: Boolean(filter.expanded)
   };
 }
@@ -2560,13 +4068,25 @@ function statusPill(status) {
     needs_sync: ["warn", "потрібен обмін"],
     hidden: ["info", "приховано"],
     moderation: ["warn", "модерація"],
-    new_order: ["warn", "нове замовлення"],
-    agreed: ["info", "узгоджено"],
-    sent_to_warehouse: ["marketplace-warehouse", "передано на склад"],
-    sent_to_delivery: ["marketplace-delivery", "передано на доставку"],
-    delivered: ["marketplace-delivered", "доставлено / вручено"],
+    new_order: ["marketplace-new", "Нове замовлення"],
+    in_progress: ["marketplace-progress", "В роботі"],
+    waiting_client: ["marketplace-waiting", "Очікує підтвердження клієнта"],
+    confirmed_by_client: ["marketplace-confirmed", "Підтверджено клієнтом"],
+    upsell: ["marketplace-upsell", "Апсел / крос-сел"],
+    waiting_payment: ["marketplace-payment-waiting", "Очікує оплату"],
+    picking: ["marketplace-warehouse", "На комплектації"],
+    picked: ["marketplace-picked", "Зібрано"],
+    shipped: ["marketplace-delivery", "Відправлено"],
+    delivered: ["marketplace-delivered", "Доставлено"],
+    completed: ["marketplace-completed", "Завершено"],
+    follow_up: ["marketplace-aftersale", "Follow-up"],
+    repeat_sale: ["marketplace-repeat", "Повторний продаж"],
+    agreed: ["marketplace-confirmed", "Підтверджено клієнтом"],
+    sent_to_warehouse: ["marketplace-warehouse", "На комплектації"],
+    sent_to_delivery: ["marketplace-delivery", "Відправлено"],
+    aftersale: ["marketplace-aftersale", "Follow-up"],
     invoiced: ["good", "накладна"],
-    payment_expected: ["warn", "очікує оплати"],
+    payment_expected: ["marketplace-payment-waiting", "Очікує оплату"],
     request_new: ["warn", "нова заявка"],
     request_draft: ["info", "чернетка клієнта"],
     request_review: ["danger", "потребує виправлення"],
@@ -2581,6 +4101,12 @@ function statusPill(status) {
     sold: ["danger", "продано"],
     verified: ["good", "ЄРЗ перевірено"],
     pending: ["warn", "ЄРЗ очікує"],
+    new: ["warn", "нове"],
+    answered: ["good", "відповіли"],
+    waiting_customer: ["info", "очікує клієнта"],
+    waiting_marketplace: ["warn", "очікує маркетплейс"],
+    archived: ["info", "архів"],
+    closed: ["good", "закрито"],
     ok: ["good", "активно"],
     open: ["warn", "відкрито"],
     planned: ["info", "план"],
@@ -2588,8 +4114,9 @@ function statusPill(status) {
     mapping_needed: ["warn", "мапінг"],
     pending_export: ["warn", "BAS очікує"],
     pending_import: ["warn", "імпорт"],
-    exported: ["good", "BAS експорт"],
-    imported: ["good", "BAS імпорт"]
+    exported: ["good", "експорт"],
+    imported: ["good", "імпорт"],
+    error: ["danger", "помилка"]
   };
   const [kind, label] = map[status] || ["info", status || "стан"];
   return `<span class="pill ${kind}">${label}</span>`;
@@ -2600,19 +4127,130 @@ function currentTimestamp() {
 }
 
 function marketplaceOrderStatusPill(status) {
-  const item = MARKETPLACE_ORDER_STATUS_MAP[status] || MARKETPLACE_ORDER_STATUS_MAP.new_order;
+  const item = salesFunnelStage(normalizeMarketplaceOrderStatus(status));
   return `<span class="pill ${item.className}">${item.label}</span>`;
 }
 
+function marketplaceOrderStatusOptions(selected = "") {
+  return salesFunnelRules().map((item) => option(item.id, item.label, item.id === selected)).join("");
+}
+
+const DELIVERY_STATUS_META = {
+  new: ["info", "очікує ТТН"],
+  sent_to_warehouse: ["marketplace-warehouse", "на складі"],
+  picked: ["marketplace-warehouse", "відбірка ОК"],
+  warehouse_handover: ["warn", "передано логісту"],
+  logistics_accepted: ["marketplace-delivery", "логіст прийняв"],
+  sent_to_delivery: ["marketplace-delivery", "у доставці"],
+  in_transit: ["marketplace-delivery", "в дорозі"],
+  arrived_branch: ["warn", "у відділенні"],
+  delivered: ["marketplace-delivered", "вручено"],
+  delivery_problem: ["danger", "проблема доставки"]
+};
+
+const DELIVERY_STATUS_ORDER = Object.keys(DELIVERY_STATUS_META);
+
 function marketplaceDeliveryStatusPill(status) {
-  const map = {
-    new: ["info", "очікує ТТН"],
-    sent_to_warehouse: ["marketplace-warehouse", "на складі"],
-    sent_to_delivery: ["marketplace-delivery", "у доставці"],
-    delivered: ["marketplace-delivered", "вручено"]
-  };
-  const [kind, label] = map[status] || ["info", status || "доставка"];
+  const [kind, label] = DELIVERY_STATUS_META[status] || ["info", status || "доставка"];
   return `<span class="pill ${kind}">${label}</span>`;
+}
+
+function deliveryStatusLabel(status) {
+  return (DELIVERY_STATUS_META[status] && DELIVERY_STATUS_META[status][1]) || status || "доставка";
+}
+
+function deliveryStatusOptions(selected = "new") {
+  return DELIVERY_STATUS_ORDER.map((status) => option(status, deliveryStatusLabel(status), selected === status)).join("");
+}
+
+function novaPoshtaDeliveryStatus(statusCode = "", statusText = "") {
+  const code = String(statusCode || "").trim();
+  const text = String(statusText || "").toLowerCase();
+  if (["9", "10", "11", "106"].includes(code) || text.includes("отримано") || text.includes("отриман")) return "delivered";
+  if (["102", "103", "108"].includes(code) || text.includes("відмова") || text.includes("повернен")) return "delivery_problem";
+  if (["7", "8"].includes(code) || text.includes("прибув") || text.includes("відділен") || text.includes("поштомат")) return "arrived_branch";
+  if (["5", "6", "41", "101"].includes(code) || text.includes("дороз") || text.includes("пряму")) return "in_transit";
+  if (["1", "4"].includes(code) || text.includes("очіку")) return "sent_to_delivery";
+  return "sent_to_delivery";
+}
+
+function novaPoshtaApiTtn(ttn = "") {
+  return String(ttn || "").replace(/\D/g, "");
+}
+
+function isNovaPoshtaApiTtn(ttn = "") {
+  const normalized = novaPoshtaApiTtn(ttn);
+  return normalized.length >= 11 && normalized.length <= 14;
+}
+
+function novaPoshtaServerGatewaySettings(previous = {}) {
+  return {
+    ...(previous || {}),
+    provider: "Nova Poshta",
+    enabled: true,
+    mode: "production",
+    apiKey: "",
+    endpoint: "/api/delivery/nova-poshta/track",
+    serverGateway: true,
+    status: "server_gateway",
+    lastCheck: previous?.lastCheck || ""
+  };
+}
+
+function deliveryApiSettings() {
+  state.settings.deliveryApi = {
+    nova_poshta: {
+      provider: "Нова пошта",
+      enabled: true,
+      mode: "production",
+      apiKey: "",
+      endpoint: "/api/delivery/nova-poshta/track",
+      serverGateway: true,
+      status: "server_gateway",
+      lastCheck: ""
+    },
+    ukrposhta: {
+      provider: "Укрпошта",
+      enabled: false,
+      mode: "test",
+      apiKey: "",
+      endpoint: "https://www.ukrposhta.ua/ecom/0.0.1/",
+      status: "not_configured",
+      lastCheck: ""
+    },
+    ...(state.settings.deliveryApi || {})
+  };
+  state.settings.deliveryApi.nova_poshta = {
+    provider: "Нова пошта",
+    enabled: true,
+    mode: "production",
+    apiKey: "",
+    endpoint: "/api/delivery/nova-poshta/track",
+    serverGateway: true,
+    status: "server_gateway",
+    lastCheck: state.settings.deliveryApi.nova_poshta?.lastCheck || ""
+  };
+  state.settings.deliveryApi.nova_poshta = novaPoshtaServerGatewaySettings(state.settings.deliveryApi.nova_poshta);
+  return state.settings.deliveryApi;
+}
+
+function deliveryProviderKey(service = "") {
+  const normalized = String(service).toLowerCase();
+  if (normalized.includes("укр") || normalized.includes("ukr")) return "ukrposhta";
+  return "nova_poshta";
+}
+
+function deliveryProviderForOrder(order) {
+  const settings = deliveryApiSettings();
+  const key = deliveryProviderKey(order?.delivery?.service || "");
+  return key === "nova_poshta" ? settings.nova_poshta : settings[key] || settings.nova_poshta;
+}
+
+function deliveryApiProviderPill(provider) {
+  const ready = provider.enabled && (provider.serverGateway || provider.serverKeyConfigured || provider.apiKey);
+  const kind = ready ? "good" : provider.enabled ? "warn" : "info";
+  const label = ready ? "server gateway" : provider.enabled ? "нема ключа API" : "API вимкнено";
+  return `<span class="pill ${kind}">${escapeHtml(provider.provider)}: ${label}</span>`;
 }
 
 function marketplacePaymentStatusPill(status) {
@@ -2630,6 +4268,18 @@ function canManageMarketplaceOrder() {
   return canCreateDocument("marketplaceOrder");
 }
 
+function canEditMarketplaceOrder() {
+  return canCreateDocument("marketplaceOrderEdit") || canEditPostedDocument("marketplaceOrder");
+}
+
+function canEditMarketplacePublication() {
+  return canCreateDocument("marketplacePublicationEdit");
+}
+
+function canContactMarketplaceBuyer() {
+  return canCreateDocument("marketplaceCommunication");
+}
+
 function canChangeMarketplaceOrderStatus() {
   return canCreateDocument("marketplaceStatus") && canEditField("marketplaceStatus");
 }
@@ -2638,22 +4288,38 @@ function canTrackMarketplaceDelivery() {
   return canCreateDocument("deliveryTracking") && canEditField("deliveryTracking");
 }
 
+function canSendMarketplaceOrderToWarehouse() {
+  return canChangeMarketplaceOrderStatus() && canEditField("warehouse");
+}
+
+function canConfirmMarketplacePicking() {
+  return canCreateDocument("warehousePicking") && canEditField("warehouse");
+}
+
+function canHandoverMarketplaceOrderToLogistics() {
+  return canCreateDocument("warehouseHandover") && canEditField("warehouse");
+}
+
+function canAcceptMarketplaceOrderLogistics() {
+  return canCreateDocument("logisticsAcceptance") && canEditField("logistics");
+}
+
 function canTrackMarketplacePayment() {
   return canCreateDocument("paymentTracking") && canEditField("paymentTracking");
 }
 
 function navCount(view) {
-  if (view === "sales") return state.invoices.length;
-  if (view === "products") return state.products.length;
-  if (view === "purchases") return state.purchases.length;
-  if (view === "clients") return state.clients.length;
-  if (view === "serials") return state.serials.length;
-  if (view === "finance") return state.invoices.filter((invoice) => invoice.total > invoice.paid).length;
-  if (view === "b2b") return (state.b2bShipmentRequests || []).filter((request) => ["request_new", "request_review"].includes(request.status)).length || "";
-  if (view === "reports") return "12";
-  if (view === "marketplaces") return state.marketplaceOrders.filter((order) => order.status === "new_order").length || state.marketplacePublications.filter((item) => item.status !== "published").length;
-  if (view === "integrations") return state.integrations.filter((item) => item.status !== "ok").length;
-  if (view === "roles") return state.employees.length;
+  if (view === "dashboard") return state.audit.length;
+  if (view === "sales") return state.marketplaceOrders.filter((order) => order.status === "new_order").length || state.marketplaceOrders.length;
+  if (view === "b2c") return retailStoreInvoices().length || "";
+  if (view === "b2b") {
+    const pending = (state.b2bShipmentRequests || []).filter((request) => ["request_new", "request_review"].includes(request.status)).length;
+    return pending || state.clients.filter((client) => client.type === "B2B").length;
+  }
+  if (view === "products") return state.marketplacePublications.filter((item) => item.status !== "published").length || state.products.length;
+  if (view === "reports") return state.marketplaceStats.length;
+  if (view === "finance") return state.marketplaceOrders.filter((order) => order.payment?.status !== "paid").length;
+  if (view === "settings") return state.integrations.filter((item) => item.status !== "ok").length || "";
   return "";
 }
 
@@ -2665,13 +4331,136 @@ function syncSidebarToggleButton() {
   toggle.setAttribute("aria-label", sidebarCollapsed ? "Розгорнути меню" : "Згорнути меню");
 }
 
+function subviewsFor(viewId) {
+  return (SUBVIEWS[viewId] || []).filter(([subviewId]) => canAccessSubview(viewId, subviewId));
+}
+
+function currentSubview(viewId = state.currentView) {
+  const items = subviewsFor(viewId);
+  if (!items.length) return "";
+  state.currentSubViews = state.currentSubViews || {};
+  const current = state.currentSubViews[viewId];
+  if (items.some(([id]) => id === current)) return current;
+  state.currentSubViews[viewId] = items[0][0];
+  return state.currentSubViews[viewId];
+}
+
+function renderSubviewSelector() {
+  const items = subviewsFor(state.currentView);
+  if (!items.length) return "";
+  const current = currentSubview(state.currentView);
+  return `
+    <label class="field compact subview-field" id="subview-field">
+      <span>Підпункт</span>
+      <select id="subview-select" aria-label="Підпункт розділу">
+        ${items.map(([id, label]) => option(id, label, id === current)).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function renderSubviewFlyout(viewId = state.currentView) {
+  const items = subviewsFor(viewId);
+  if (!items.length) return "";
+  const navItem = NAV.find(([id]) => id === viewId);
+  const current = currentSubview(viewId);
+  return `
+    <aside class="subnav-flyout" id="subnav-flyout" data-subnav-view="${escapeHtml(viewId)}" aria-label="Підпункти розділу">
+      <div class="subnav-head">
+        <span>${escapeHtml(navItem?.[2] || "")}</span>
+        <strong>${escapeHtml(navItem?.[1] || "Розділ")}</strong>
+      </div>
+      <div class="subnav-list">
+        ${items.map(([id, label]) => `
+          <button class="${id === current ? "active" : ""}" type="button" data-subview-button="${escapeHtml(id)}">
+            <span class="subnav-marker" aria-hidden="true"></span>
+            <span>${escapeHtml(label)}</span>
+          </button>
+        `).join("")}
+      </div>
+    </aside>
+  `;
+}
+
+function hideSidebarSubnav() {
+  $("#subnav-flyout")?.remove();
+}
+
+function cancelSidebarSubnavHide() {
+  if (subnavHideTimer) {
+    clearTimeout(subnavHideTimer);
+    subnavHideTimer = null;
+  }
+}
+
+function scheduleSidebarSubnavHide() {
+  cancelSidebarSubnavHide();
+  subnavHideTimer = setTimeout(() => {
+    hideSidebarSubnav();
+    subnavHideTimer = null;
+  }, 160);
+}
+
+function elementInsideSidebarSubnav(element) {
+  return element?.closest?.(".sidebar, #subnav-flyout");
+}
+
+function handleSidebarSubnavHover(event) {
+  const navButton = event.target.closest?.("#nav button[data-view]");
+  if (navButton) {
+    showSidebarSubnav(navButton.dataset.view);
+    return;
+  }
+  if (event.target.closest?.("#subnav-flyout")) {
+    cancelSidebarSubnavHide();
+    return;
+  }
+  if ($("#subnav-flyout") && !elementInsideSidebarSubnav(event.target)) {
+    scheduleSidebarSubnavHide();
+  }
+}
+
+function handleSidebarSubnavLeave(event) {
+  if (!elementInsideSidebarSubnav(event.target)) return;
+  if (elementInsideSidebarSubnav(event.relatedTarget)) return;
+  scheduleSidebarSubnavHide();
+}
+
+function showSidebarSubnav(viewId) {
+  if (!canAccessView(viewId) || !subviewsFor(viewId).length) {
+    scheduleSidebarSubnavHide();
+    return;
+  }
+  cancelSidebarSubnavHide();
+  const existing = $("#subnav-flyout");
+  if (existing?.dataset.subnavView === viewId) return;
+  existing?.remove();
+  $(".sidebar")?.insertAdjacentHTML("afterend", renderSubviewFlyout(viewId));
+}
+
+function syncAppVersion() {
+  const node = $("#app-version");
+  if (!node) return;
+  node.innerHTML = `
+    <span>Версія</span>
+    <strong>v${escapeHtml(APP_VERSION)}</strong>
+    <small>${escapeHtml(APP_BUILD)}</small>
+    <small>${escapeHtml(APP_BUILD_DAY)}, ${escapeHtml(APP_BUILD_DATE)}</small>
+    <small>час ${escapeHtml(APP_BUILD_TIME)}</small>
+  `;
+}
+
 function renderShell() {
+  ensureSessionDefaults();
   document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed);
   syncSidebarToggleButton();
+  syncAppVersion();
   $("#export-json")?.removeAttribute("hidden");
   $("#reset-demo")?.removeAttribute("hidden");
-  $("#nav").innerHTML = NAV.filter(([id]) => canAccessView(id)).map(([id, label, icon]) => `
-    <button data-view="${id}" class="${state.currentView === id ? "active" : ""}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
+  const accessibleNav = NAV.filter(([id]) => canAccessView(id));
+  const navRows = accessibleNav.length ? accessibleNav : NAV;
+  $("#nav").innerHTML = navRows.map(([id, label, icon]) => `
+    <button data-view="${id}" class="${state.currentView === id ? "active" : ""}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" aria-haspopup="${subviewsFor(id).length ? "menu" : "false"}">
       <span class="nav-icon">${icon}</span>
       <span class="nav-label">${label}</span>
       <span class="nav-count">${navCount(id)}</span>
@@ -2690,6 +4479,8 @@ function renderShell() {
   if (badge) {
     badge.innerHTML = `<strong>${escapeHtml(employee?.name || "-")}</strong><small>${escapeHtml(employee?.roleName || "-")}</small>`;
   }
+  $("#subview-field")?.remove();
+  $("#subnav-flyout")?.remove();
 
   const navItem = NAV.find(([id]) => id === state.currentView);
   $("#page-title").textContent = navItem ? navItem[1] : "CRM";
@@ -2698,6 +4489,7 @@ function renderShell() {
 function renderClientShell(client) {
   document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed);
   syncSidebarToggleButton();
+  syncAppVersion();
   $("#export-json")?.setAttribute("hidden", "hidden");
   $("#reset-demo")?.setAttribute("hidden", "hidden");
   const clientViews = [
@@ -2736,12 +4528,227 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function applySubpageVisibility(root = $("#app")) {
+  if (!root) return;
+  const rules = SUBVIEW_SECTION_PREFIXES[state.currentView];
+  const selected = currentSubview(state.currentView);
+  if (!rules || !selected) return;
+  const allPrefixes = Object.values(rules).flat();
+  const selectedPrefixes = rules[selected] || [];
+  root.querySelectorAll(".panel, section[data-rozetka-inbound-panel], section[data-settings-section]").forEach((element) => {
+    const title = element.querySelector("h2")?.textContent?.trim() || "";
+    if (!title) return;
+    const managed = allPrefixes.some((prefix) => title.startsWith(prefix) || title.includes(prefix));
+    if (!managed) return;
+    element.hidden = !selectedPrefixes.some((prefix) => title.startsWith(prefix) || title.includes(prefix));
+  });
+}
+
+function sortableTextValue(text) {
+  const value = String(text || "").replace(/\s+/g, " ").trim();
+  if (!value) return { type: "empty", value: "" };
+  const isoDate = value.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (isoDate) return { type: "date", value: `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}` };
+  const uaDate = value.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
+  if (uaDate) return { type: "date", value: `${uaDate[3]}-${uaDate[2]}-${uaDate[1]}` };
+  const numeric = value
+    .replace(/[^\d,.\-]/g, "")
+    .replace(/\.(?=\d{3}(\D|$))/g, "")
+    .replace(",", ".");
+  if (numeric && numeric !== "-" && !Number.isNaN(Number(numeric))) {
+    return { type: "number", value: Number(numeric) };
+  }
+  return { type: "text", value: value.toLocaleLowerCase("uk-UA") };
+}
+
+function compareSortableText(first, second) {
+  const left = sortableTextValue(first);
+  const right = sortableTextValue(second);
+  if (left.type === "empty" && right.type !== "empty") return 1;
+  if (right.type === "empty" && left.type !== "empty") return -1;
+  if (left.type === "number" && right.type === "number") return left.value - right.value;
+  if (left.type === "date" && right.type === "date") return left.value.localeCompare(right.value);
+  return String(left.value).localeCompare(String(right.value), "uk", { numeric: true, sensitivity: "base" });
+}
+
+function sortDomTable(table, columnIndex) {
+  const tbody = table.tBodies?.[0];
+  if (!tbody) return;
+  const currentIndex = table.dataset.sortIndex;
+  const nextDir = currentIndex === String(columnIndex) && table.dataset.sortDir === "asc" ? "desc" : "asc";
+  table.dataset.sortIndex = String(columnIndex);
+  table.dataset.sortDir = nextDir;
+  const rows = Array.from(tbody.rows);
+  const sortableRows = rows.filter((row) => row.cells.length > columnIndex && !row.cells[0]?.hasAttribute("colspan"));
+  const restRows = rows.filter((row) => !sortableRows.includes(row));
+  sortableRows.sort((first, second) => {
+    const result = compareSortableText(first.cells[columnIndex]?.textContent || "", second.cells[columnIndex]?.textContent || "");
+    return nextDir === "asc" ? result : -result;
+  });
+  [...sortableRows, ...restRows].forEach((row) => tbody.appendChild(row));
+  table.querySelectorAll("[data-table-sort-index]").forEach((button) => {
+    const active = button.dataset.tableSortIndex === String(columnIndex);
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-sort", active ? (nextDir === "asc" ? "ascending" : "descending") : "none");
+    const indicator = button.querySelector(".sort-indicator");
+    if (indicator) indicator.textContent = active ? (nextDir === "asc" ? "↑" : "↓") : "↕";
+  });
+}
+
+function datesInText(text) {
+  const value = String(text || "");
+  const dates = [];
+  value.replace(/\b(20\d{2})-(\d{2})-(\d{2})\b/g, (match, year, month, day) => {
+    dates.push(`${year}-${month}-${day}`);
+    return match;
+  });
+  value.replace(/\b(\d{2})\.(\d{2})\.(20\d{2})\b/g, (match, day, month, year) => {
+    dates.push(`${year}-${month}-${day}`);
+    return match;
+  });
+  return Array.from(new Set(dates));
+}
+
+function smartListPreferences(key) {
+  state.smartListPreferences = state.smartListPreferences || {};
+  if (!state.smartListPreferences[key]) {
+    state.smartListPreferences[key] = { collapsed: false, from: "", to: "" };
+  }
+  return state.smartListPreferences[key];
+}
+
+function smartListTitle(list, index) {
+  const container = list.closest(".panel, .card, section, article") || list.parentElement;
+  const heading = container?.querySelector("h2, h3");
+  if (heading?.textContent?.trim()) return heading.textContent.trim();
+  const firstHeader = list.querySelector("th")?.textContent?.trim();
+  return firstHeader ? `Список: ${firstHeader}` : `Список ${index + 1}`;
+}
+
+function smartListKey(title, index) {
+  const subview = currentSubview(state.currentView) || "all";
+  return `${authMode || "crm"}|${state.currentView}|${subview}|${index}|${title}`;
+}
+
+function smartListRows(list) {
+  const table = list.matches("table") ? list : list.querySelector("table");
+  if (table?.tBodies?.[0]) return Array.from(table.tBodies[0].rows);
+  return Array.from(list.children).filter((child) => !child.matches(".smart-list-empty"));
+}
+
+function smartListDateMatches(dates, preferences, listHasDates) {
+  const from = preferences.from || "";
+  const to = preferences.to || "";
+  if (!from && !to) return true;
+  if (!dates.length) return !listHasDates;
+  if (from && !to) return dates.some((date) => date === from);
+  if (!from && to) return dates.some((date) => date === to);
+  const start = from <= to ? from : to;
+  const end = from <= to ? to : from;
+  return dates.some((date) => date >= start && date <= end);
+}
+
+function applySmartListState(frame) {
+  const key = frame.dataset.smartListKey;
+  const preferences = smartListPreferences(key);
+  const list = frame.querySelector("[data-smart-list-body]");
+  if (!list) return;
+  const rows = smartListRows(list).map((row) => ({
+    row,
+    dates: datesInText(row.textContent)
+  }));
+  const listHasDates = rows.some(({ dates }) => dates.length);
+  let visibleCount = 0;
+  rows.forEach(({ row, dates }) => {
+    const visible = smartListDateMatches(dates, preferences, listHasDates);
+    row.hidden = !visible;
+    if (visible) visibleCount += 1;
+  });
+  const collapsed = Boolean(preferences.collapsed);
+  frame.classList.toggle("smart-list-collapsed", collapsed);
+  list.hidden = collapsed;
+  const empty = frame.querySelector(".smart-list-empty");
+  if (empty) empty.hidden = collapsed || visibleCount > 0 || rows.length === 0;
+  const toggle = frame.querySelector("[data-smart-list-toggle]");
+  if (toggle) {
+    toggle.textContent = collapsed ? "▸" : "▾";
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    toggle.title = collapsed ? "Розгорнути список" : "Згорнути список";
+    toggle.setAttribute("aria-label", collapsed ? "Розгорнути список" : "Згорнути список");
+  }
+  const count = frame.querySelector("[data-smart-list-count]");
+  if (count) count.textContent = `${visibleCount}/${rows.length}`;
+  const fromInput = frame.querySelector('[name="smartListFrom"]');
+  const toInput = frame.querySelector('[name="smartListTo"]');
+  if (fromInput && fromInput.value !== preferences.from) fromInput.value = preferences.from;
+  if (toInput && toInput.value !== preferences.to) toInput.value = preferences.to;
+}
+
+function enhanceSmartLists(root = $("#app")) {
+  if (!root) return;
+  const lists = root.querySelectorAll(".table-wrap, .dashboard-list, .timeline");
+  lists.forEach((list, index) => {
+    if (list.closest("[hidden]")) return;
+    if (list.closest(".smart-list-frame")) return;
+    const title = smartListTitle(list, index);
+    const key = smartListKey(title, index);
+    const preferences = smartListPreferences(key);
+    const frame = document.createElement("div");
+    frame.className = "smart-list-frame";
+    frame.dataset.smartListKey = key;
+    frame.innerHTML = `
+      <div class="smart-list-toolbar">
+        <div class="smart-list-title">
+          <strong>${escapeHtml(title)}</strong>
+          <span class="pill info" data-smart-list-count>0/0</span>
+        </div>
+        <div class="smart-list-controls">
+          <label class="field compact">
+            <span>Дата від</span>
+            <input name="smartListFrom" type="date" value="${escapeHtml(preferences.from || "")}" data-smart-list-date>
+          </label>
+          <label class="field compact">
+            <span>Дата до</span>
+            <input name="smartListTo" type="date" value="${escapeHtml(preferences.to || "")}" data-smart-list-date>
+          </label>
+          <button class="icon-button" type="button" data-smart-list-clear title="Скинути дати" aria-label="Скинути дати">×</button>
+          <button class="icon-button" type="button" data-smart-list-toggle aria-expanded="true" title="Згорнути список" aria-label="Згорнути список">▾</button>
+        </div>
+      </div>
+    `;
+    list.parentNode.insertBefore(frame, list);
+    list.dataset.smartListBody = "true";
+    frame.appendChild(list);
+    frame.insertAdjacentHTML("beforeend", '<p class="smart-list-empty muted small" hidden>Немає рядків за вибраною датою.</p>');
+    applySmartListState(frame);
+  });
+}
+
+function enhanceTables(root = $("#app")) {
+  if (!root) return;
+  root.querySelectorAll(".table-wrap").forEach((wrap) => wrap.classList.add("scroll-list"));
+  root.querySelectorAll("table").forEach((table) => {
+    const headerCells = Array.from(table.tHead?.rows?.[0]?.cells || []);
+    headerCells.forEach((th, index) => {
+      if (th.querySelector("button, input, select, textarea")) return;
+      const label = th.textContent.trim();
+      if (!label || /^дії$/i.test(label)) return;
+      th.innerHTML = `
+        <button class="table-sort" type="button" data-table-sort-index="${index}" aria-sort="none">
+          <span>${escapeHtml(label)}</span>
+          <span class="sort-indicator">↕</span>
+        </button>
+      `;
+    });
+  });
+  enhanceSmartLists(root);
+}
+
 function fieldSuggestions(input) {
+  if (input.dataset.skipSuggestions !== undefined || input.dataset.linkedRequisite !== undefined) return [];
   const key = `${input.name || ""} ${input.placeholder || ""}`.toLowerCase();
   const all = [
     ...state.clients.map((client) => client.name),
-    ...state.clients.map((client) => client.phone || ""),
-    ...state.clients.map((client) => client.email || ""),
     ...state.products.map((product) => product.model),
     ...state.products.map((product) => product.brand),
     ...state.products.map((product) => product.barcode),
@@ -2759,8 +4766,7 @@ function fieldSuggestions(input) {
     ...state.marketplaceOrders.map((order) => order.externalOrderId)
   ];
   if (key.includes("client") || key.includes("клієнт") || key.includes("покуп")) return uniqueList(state.clients.map((client) => client.name));
-  if (key.includes("phone") || key.includes("тел")) return uniqueList(state.clients.map((client) => client.phone));
-  if (key.includes("email")) return uniqueList(state.clients.map((client) => client.email));
+  if (key.includes("phone") || key.includes("тел") || key.includes("email")) return [];
   if (key.includes("supplier") || key.includes("постач")) return uniqueList(state.settings.suppliers.map((supplier) => supplier.name));
   if (key.includes("barcode") || key.includes("qr") || key.includes("штрих")) return uniqueList(state.products.map((product) => product.barcode));
   if (key.includes("sku") || key.includes("артикул")) return uniqueList([...state.products.map((product) => product.supplierSku), ...state.marketplacePublications.map((publication) => publication.sku)]);
@@ -2781,6 +4787,7 @@ function attachFieldSuggestions() {
   const datalists = [];
   $$("input").forEach((input, index) => {
     if (["date", "number", "file", "checkbox", "radio", "password", "hidden"].includes(input.type) || input.disabled || input.readOnly) return;
+    if (input.dataset.skipSuggestions !== undefined || input.dataset.linkedRequisite !== undefined) return;
     const values = fieldSuggestions(input);
     if (!values.length) return;
     const id = `crm-suggest-${index}`;
@@ -2788,6 +4795,255 @@ function attachFieldSuggestions() {
     datalists.push(`<datalist id="${id}">${values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}</datalist>`);
   });
   host.innerHTML = datalists.join("");
+}
+
+function attachLinkedRequisiteInputs(root = $("#app")) {
+  if (!root) return;
+  const inputs = $$("input[data-linked-requisite]", root);
+  if (!inputs.length) return;
+  let host = $("#crm-linked-requisite-suggestions");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "crm-linked-requisite-suggestions";
+    document.body.appendChild(host);
+  }
+  const datalists = [];
+  inputs.forEach((input, index) => {
+    const form = input.closest("form");
+    const parentType = input.dataset.linkedRequisite;
+    const parentField = input.dataset.linkedParentField;
+    const fieldKey = input.dataset.requisiteField;
+    const parentId = linkedParentIdForInput(input);
+    const parent = linkedParentById(parentType, parentId);
+    const values = linkedRequisiteValues(parent, parentType, fieldKey);
+    const id = `crm-linked-req-${parentType}-${fieldKey}-${index}`;
+    if (values.length) {
+      input.setAttribute("list", id);
+      datalists.push(`<datalist id="${id}">${values.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}</datalist>`);
+    } else {
+      input.removeAttribute("list");
+    }
+    const actionRoot = input.closest(".input-action");
+    let picker = actionRoot?.querySelector?.(`select[data-linked-requisite-picker][data-target-name="${CSS.escape(input.name)}"]`);
+    if (actionRoot && !picker) {
+      picker = document.createElement("select");
+      picker.dataset.linkedRequisitePicker = "";
+      picker.dataset.targetName = input.name;
+      picker.title = "Обрати з прив'язаних реквізитів";
+      picker.setAttribute("aria-label", "Обрати з прив'язаних реквізитів");
+      input.insertAdjacentElement("afterend", picker);
+    }
+    if (picker) {
+      const currentValue = String(input.value || "").trim();
+      picker.hidden = !parent;
+      picker.disabled = !parent || !values.length;
+      picker.innerHTML = values.length
+        ? [
+            option("", "обрати", !values.some((value) => normalizedText(value) === normalizedText(currentValue))),
+            ...values.map((value) => option(value, value, normalizedText(value) === normalizedText(currentValue)))
+          ].join("")
+        : option("", parent ? "немає реквізитів" : "оберіть картку", true);
+    }
+    const buttonRoot = linkedScopeRoot(input) || form;
+    const button = buttonRoot?.querySelector?.(`[data-add-linked-requisite][data-target-name="${input.name}"]`);
+    if (button) {
+      button.disabled = !parent;
+      button.title = parent
+        ? `Додати ${input.dataset.requisiteLabel || "реквізит"} до ${linkedParentName(parentType, parent)}`
+        : "Спочатку оберіть батьківську картку";
+    }
+  });
+  host.innerHTML = datalists.join("");
+}
+
+function linkedScopeRoot(element) {
+  const scope = element?.dataset?.linkedParentScope;
+  if (scope === "row") return element.closest("tr, [data-sale-line], [data-purchase-line], [data-marketplace-publication-line]");
+  return element.closest("form");
+}
+
+function linkedParentIdForInput(input) {
+  const parentField = input.dataset.linkedParentField;
+  const scoped = linkedScopeRoot(input);
+  const scopedParent = scoped?.querySelector?.(`[name="${CSS.escape(parentField)}"]`);
+  if (scopedParent) return scopedParent.value || "";
+  const form = input.closest("form");
+  return form?.elements?.[parentField]?.value || input.dataset.linkedParentId || "";
+}
+
+function syncLinkedParentSelection(select) {
+  const form = select.closest("form");
+  const parentType = select.dataset.linkedParent;
+  const parent = linkedParentById(parentType, select.value);
+  const nameTarget = select.dataset.linkedNameTarget;
+  if (form && parent && nameTarget && form.elements?.[nameTarget]) {
+    form.elements[nameTarget].value = linkedParentName(parentType, parent);
+  }
+  const root = linkedScopeRoot(select) || form || document;
+  $$(`input[data-linked-requisite="${parentType}"][data-linked-parent-field="${select.name}"]`, root).forEach((input) => {
+    const values = linkedRequisiteValues(parent, parentType, input.dataset.requisiteField);
+    input.value = values[0] || "";
+  });
+  attachLinkedRequisiteInputs(root || $("#app"));
+}
+
+function linkedRequisiteInput(config) {
+  const required = config.required ? "required" : "";
+  const type = config.fieldKey === "emails" ? 'type="email"' : "";
+  const className = `field${config.full ? " full" : ""}${config.wide ? " wide" : ""}`;
+  const placeholder = config.placeholder || "оберіть з прив'язаних або додайте нове";
+  const parentScope = config.parentScope ? `data-linked-parent-scope="${escapeHtml(config.parentScope)}"` : "";
+  return `
+    <label class="${className}">
+      <span>${escapeHtml(config.label)}</span>
+      <div class="input-action">
+        <input name="${escapeHtml(config.name)}" ${type} ${required}
+          data-skip-suggestions
+          data-linked-requisite="${escapeHtml(config.parentType)}"
+          data-linked-parent-field="${escapeHtml(config.parentField)}"
+          ${parentScope}
+          data-requisite-field="${escapeHtml(config.fieldKey)}"
+          data-requisite-label="${escapeHtml(config.label)}"
+          value="${escapeHtml(config.value || "")}"
+          placeholder="${escapeHtml(placeholder)}">
+        <button class="ghost" type="button" data-add-linked-requisite data-target-name="${escapeHtml(config.name)}" ${parentScope} title="Додати реквізит">+</button>
+      </div>
+    </label>
+  `;
+}
+
+function openAddLinkedRequisiteModal(button) {
+  const sourceForm = button.closest("form");
+  const targetName = button.dataset.targetName || "";
+  const scoped = linkedScopeRoot(button) || sourceForm;
+  const input = scoped?.querySelector?.(`[name="${CSS.escape(targetName)}"]`) || sourceForm?.elements?.[targetName];
+  if (!sourceForm || !input) return;
+  const parentType = input.dataset.linkedRequisite;
+  const fieldKey = input.dataset.requisiteField;
+  const parentId = linkedParentIdForInput(input);
+  const parent = linkedParentById(parentType, parentId);
+  if (!parent) {
+    alert("Спочатку оберіть батьківську картку.");
+    return;
+  }
+  if (!sourceForm.dataset.linkedRequisiteScope) sourceForm.dataset.linkedRequisiteScope = uniqueId("reqform");
+  if (!input.dataset.linkedRequisiteTarget) input.dataset.linkedRequisiteTarget = uniqueId("reqtarget");
+  const field = linkedRequisiteDef(parentType, fieldKey);
+  const parentLabel = LINKED_REQUISITE_DEFS[parentType]?.label || "картки";
+  openModal(`Додати ${field?.label || "реквізит"}`, `
+    <form class="form-grid" data-action="add-linked-requisite">
+      <input type="hidden" name="sourceScope" value="${escapeHtml(sourceForm.dataset.linkedRequisiteScope)}">
+      <input type="hidden" name="targetToken" value="${escapeHtml(input.dataset.linkedRequisiteTarget)}">
+      <input type="hidden" name="parentType" value="${escapeHtml(parentType)}">
+      <input type="hidden" name="parentId" value="${escapeHtml(parent.id)}">
+      <input type="hidden" name="fieldKey" value="${escapeHtml(fieldKey)}">
+      <input type="hidden" name="targetName" value="${escapeHtml(targetName)}">
+      <p class="notice small full">${escapeHtml(linkedParentName(parentType, parent))} · ${escapeHtml(parentLabel)}</p>
+      <label class="field full"><span>${escapeHtml(field?.label || "Реквізит")}</span><input name="value" required value="${escapeHtml(input.value || "")}" autofocus></label>
+      <button class="primary" type="submit">Зберегти реквізит</button>
+    </form>
+  `);
+}
+
+function addLinkedRequisiteToParent(form) {
+  const data = formData(form);
+  const parent = linkedParentById(data.parentType, data.parentId);
+  const field = linkedRequisiteDef(data.parentType, data.fieldKey);
+  if (!parent || !field) return alert("Батьківську картку або тип реквізиту не знайдено.");
+  const value = String(data.value || "").trim();
+  if (!value) return alert("Вкажіть значення реквізиту.");
+  addLinkedRequisiteValue(parent, data.parentType, data.fieldKey, value);
+  const sourceForm = Array.from(document.querySelectorAll("form[data-linked-requisite-scope]"))
+    .find((item) => item.dataset.linkedRequisiteScope === data.sourceScope);
+  const targetInput = data.targetToken
+    ? document.querySelector(`[data-linked-requisite-target="${CSS.escape(data.targetToken)}"]`)
+    : sourceForm?.elements?.[data.targetName];
+  if (targetInput) {
+    targetInput.value = value;
+    persistLinkedRequisiteInput(targetInput);
+    attachLinkedRequisiteInputs(linkedScopeRoot(targetInput) || sourceForm);
+  }
+  addAudit(`Додано реквізит "${field.label}" до ${linkedParentName(data.parentType, parent)}`);
+  saveState();
+  form.closest(".modal-backdrop")?.remove();
+}
+
+function persistLinkedRequisiteInput(input) {
+  if (!input?.matches?.("input[data-linked-requisite]")) return false;
+  const parentType = input.dataset.linkedRequisite;
+  const fieldKey = input.dataset.requisiteField;
+  const parent = linkedParentById(parentType, linkedParentIdForInput(input));
+  const value = String(input.value || "").trim();
+  if (!parent || !fieldKey || !value) return false;
+  const saved = addLinkedRequisiteValue(parent, parentType, fieldKey, value);
+  if (saved) saveState();
+  return saved;
+}
+
+function persistLinkedRequisitesFromRoot(root) {
+  if (!root) return false;
+  let changed = false;
+  $$("input[data-linked-requisite]", root).forEach((input) => {
+    changed = persistLinkedRequisiteInput(input) || changed;
+  });
+  if (changed) attachLinkedRequisiteInputs(root);
+  return changed;
+}
+
+function demoEmployeeAccounts() {
+  return state.employees
+    .filter((employee) => employee.active !== false && employee.login && employee.password)
+    .slice(0, 12);
+}
+
+function renderDemoEmployeeAccounts() {
+  const accounts = demoEmployeeAccounts();
+  if (!accounts.length) return "";
+  return `
+    <div class="demo-users">
+      <div class="demo-users-head">
+        <h2>Тестові користувачі</h2>
+        <span class="pill info">${accounts.length} акаунтів</span>
+      </div>
+      <div class="demo-user-grid">
+        ${accounts.map((employee) => `
+          <button class="demo-user-button" type="button" data-demo-login="${escapeHtml(employee.login)}" data-demo-password="${escapeHtml(employee.password)}">
+            <strong>${escapeHtml(employee.name)}</strong>
+            <span>${escapeHtml(employee.roleName)}</span>
+            <code>${escapeHtml(employee.login)} / ${escapeHtml(employee.password)}</code>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function demoClientAccounts() {
+  return state.clients
+    .filter((client) => client.type === "B2B" && client.cabinetEnabled !== false && client.portalLogin && client.portalPassword)
+    .slice(0, 8);
+}
+
+function renderDemoClientAccounts() {
+  const accounts = demoClientAccounts();
+  if (!accounts.length) return "";
+  return `
+    <div class="demo-users">
+      <div class="demo-users-head">
+        <h2>Тестові B2B клієнти</h2>
+        <span class="pill info">${accounts.length} кабінети</span>
+      </div>
+      <div class="demo-user-grid">
+        ${accounts.map((client) => `
+          <button class="demo-user-button" type="button" data-demo-client-login="${escapeHtml(client.portalLogin)}" data-demo-client-password="${escapeHtml(client.portalPassword)}">
+            <strong>${escapeHtml(client.name)}</strong>
+            <span>${escapeHtml(client.priceType ? priceTypeName(client.priceType) : "B2B")}</span>
+            <code>${escapeHtml(client.portalLogin)} / ${escapeHtml(client.portalPassword)}</code>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function renderLogin() {
@@ -2802,9 +5058,9 @@ function renderLogin() {
   screen.innerHTML = `
     <section class="login-card">
       <div>
-        <span class="brand-mark">AC</span>
-        <h1>Вхід до Arms CRM</h1>
-        <p class="muted">Працівники входять у CRM, B2B клієнти — у свій віддалений кабінет.</p>
+        <span class="brand-mark">MP</span>
+        <h1>Вхід до Marketplace CRM</h1>
+        <p class="muted">Операційний кабінет Marketplace CRM для замовлень, товарів, залишків, цін, фінансів, ТТН та обміну з маркетплейсами.</p>
       </div>
       <div class="login-options">
         <form class="form-grid" data-action="login">
@@ -2813,14 +5069,9 @@ function renderLogin() {
           <label class="field full"><span>Пароль</span><input name="password" type="password" autocomplete="current-password" required></label>
           <button class="primary" type="submit">Увійти в CRM</button>
         </form>
-        <form class="form-grid" data-action="client-login">
-          <h2>B2B клієнт</h2>
-          <label class="field full"><span>Логін кабінету</span><input name="login" autocomplete="username" required></label>
-          <label class="field full"><span>Пароль кабінету</span><input name="password" type="password" autocomplete="current-password" required></label>
-          <button class="secondary" type="submit">Увійти в кабінет</button>
-        </form>
       </div>
-      <p class="notice small">Demo: адміністратор <strong>admin/admin</strong>, B2B кабінет Тактик Про <strong>tactic/tactic</strong>, Стрілецький Дім <strong>strilets/strilets</strong>.</p>
+      ${renderDemoEmployeeAccounts()}
+      <p class="notice small">Demo: можна зайти вручну або натиснути потрібного тестового користувача.</p>
     </section>
   `;
 }
@@ -2833,52 +5084,53 @@ function clearLoginScreen() {
 
 function render() {
   if (isClientAuthenticated()) {
-    const client = authenticatedClient();
-    clearLoginScreen();
-    renderClientShell(client);
-    $("#app").innerHTML = clientPortalView === "catalog" ? renderClientCatalogPage(client) : renderClientPortal(client);
-    attachFieldSuggestions();
-    prepareDecimalInputs($("#app"));
-    saveState();
-    return;
+    authClientId = "";
+    authMode = "";
+    appSessionStorage.removeItem("arms-crm-auth-client-id");
+    appSessionStorage.removeItem("arms-crm-auth-mode");
   }
   if (!isAuthenticated()) {
     authEmployeeId = "";
     authClientId = "";
     authMode = "";
-    sessionStorage.removeItem("arms-crm-auth-employee-id");
-    sessionStorage.removeItem("arms-crm-auth-client-id");
-    sessionStorage.removeItem("arms-crm-auth-mode");
+    appSessionStorage.removeItem("arms-crm-auth-employee-id");
+    appSessionStorage.removeItem("arms-crm-auth-client-id");
+    appSessionStorage.removeItem("arms-crm-auth-mode");
     renderLogin();
     saveState();
     return;
   }
   clearLoginScreen();
   activateEmployeeSession(authenticatedEmployee());
-  if (!canAccessView(state.currentView)) state.currentView = "dashboard";
+  if (!NAV.some(([id]) => id === state.currentView) || !canAccessView(state.currentView)) {
+    state.currentView = NAV.find(([id]) => canAccessView(id))?.[0] || "dashboard";
+  }
   renderShell();
   const viewMap = {
     dashboard: renderDashboard,
-    sales: renderSales,
-    products: renderProducts,
+    sales: renderMarketplaceSales,
+    products: renderMarketplaceProducts,
     purchases: renderPurchases,
     serials: renderSerials,
     warehouse: renderWarehouse,
-    b2b: renderB2B,
     clients: renderClients,
-    finance: renderFinance,
-    reports: renderReports,
+    finance: renderMarketplaceFinance,
+    reports: renderMarketplaceAnalytics,
     marketplaces: renderMarketplaces,
     integrations: renderIntegrations,
-    settings: renderSettings,
+    settings: renderMarketplaceSettings,
     roles: renderRoles
   };
   $("#app").innerHTML = (viewMap[state.currentView] || renderDashboard)();
+  applySubpageVisibility($("#app"));
+  enhanceTables($("#app"));
   if (state.currentView === "products") renderProductPhotoPreview();
   attachFieldSuggestions();
+  attachLinkedRequisiteInputs($("#app"));
   prepareDecimalInputs($("#app"));
   applyRoleFieldLocks($("#app"));
   saveState();
+  window.__marketplaceCrmAppBooted = true;
 }
 
 function totals() {
@@ -2889,54 +5141,3472 @@ function totals() {
   return { receivable, paid, stockValue, weaponAvailable };
 }
 
-function renderDashboard() {
-  const t = totals();
+function marketplaceOrderTotal(order) {
+  const lines = marketplaceOrderLines(order);
+  if (!lines.length) return Number(order.qty || 1) * Number(order.price || 0);
+  const targetCurrency = order.currency || lines[0]?.currency || "UAH";
+  return lines.reduce((sum, line) => sum + marketplaceOrderLineTotal(line, targetCurrency), 0);
+}
+
+function salesFunnelRules() {
+  state.settings.salesFunnel = normalizeSalesFunnel(state.settings.salesFunnel);
+  return state.settings.salesFunnel;
+}
+
+function salesFunnelStage(status) {
+  return salesFunnelRules().find((stage) => stage.id === status) || salesFunnelRules()[0];
+}
+
+function activeSalesFunnelStages() {
+  return salesFunnelRules().filter((stage) => stage.active !== false);
+}
+
+function marketplaceFunnelManager() {
+  const selected = state.marketplaceFunnelManager || state.currentManager || "";
+  if (selected === "__all") return "__all";
+  return state.managers.includes(selected) ? selected : (state.managers.includes(state.currentManager) ? state.currentManager : "__all");
+}
+
+function nextMarketplaceManager() {
+  const activeManagers = state.employees
+    .filter((employee) => employee.active !== false && employee.roleName !== "B2B клієнт")
+    .map((employee) => employee.name);
+  const candidates = activeManagers.length ? activeManagers : state.managers;
+  if (!candidates.length) return state.currentManager;
+  const load = new Map(candidates.map((manager) => [manager, 0]));
+  state.marketplaceOrders.forEach((order) => {
+    if (load.has(order.manager) && !MARKETPLACE_FINAL_STATUSES.includes(order.status)) {
+      load.set(order.manager, load.get(order.manager) + 1);
+    }
+  });
+  return [...load.entries()].sort((first, second) => first[1] - second[1] || first[0].localeCompare(second[0], "uk"))[0]?.[0] || state.currentManager;
+}
+
+function marketplaceOrderStockControl(order) {
+  const lines = marketplaceOrderLines(order);
+  if (!lines.length || lines.some((line) => !line.productId)) return { className: "danger", label: "товар не знайдено", detail: "Потрібно зіставити всі товари перед складом." };
+  const shortage = lines.find((line) => productAvailableQty(line.productId, "wh-main", "fop") < Number(line.qty || 1));
+  if (!shortage) return { className: "good", label: "склад OK", detail: `Позицій: ${lines.length}.` };
+  return { className: "danger", label: "бракує складу", detail: `${productName(shortage.productId)}: доступно ${productAvailableQty(shortage.productId, "wh-main", "fop")}, потрібно ${shortage.qty}.` };
+}
+
+function addOrderIssue(list, key, label, level = "warn") {
+  if (!list.some((item) => item.key === key)) list.push({ key, label, level });
+}
+
+function marketplaceOrderPendingActionKeys(order) {
+  const status = normalizeMarketplaceOrderStatus(order.status);
+  const paymentStatus = order.payment?.status || "expected";
+  if (status === "cancelled" || status === "repeat_sale") return [];
+  if (status === "new_order" || status === "in_progress") return ["waitClient", "confirm"];
+  if (status === "waiting_client") return ["confirm"];
+  if (status === "confirmed_by_client" || status === "upsell") {
+    return paymentStatus === "paid" ? ["warehouse"] : ["waitPayment", "createPayment"];
+  }
+  if (status === "waiting_payment") return ["pay", "createPayment"];
+  if (status === "paid") return ["warehouse"];
+  if (status === "picking") return ["picked"];
+  if (status === "picked") {
+    const deliveryStatus = order.delivery?.status || "sent_to_warehouse";
+    if (deliveryStatus === "warehouse_handover") return ["logisticsAccept"];
+    if (["logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(deliveryStatus)) return ["trackDelivery"];
+    return ["handoverDelivery"];
+  }
+  if (status === "shipped") return ["trackDelivery"];
+  if (status === "delivered") return ["complete"];
+  if (status === "completed") return ["followUp"];
+  if (status === "follow_up") return ["repeat"];
+  return [];
+}
+
+function marketplaceOrderPendingActionLabels(order) {
+  const labels = {
+    waitClient: "зв'язатися з клієнтом / поставити очікування",
+    confirm: "підтвердити замовлення клієнтом",
+    waitPayment: "перевести в очікування оплати",
+    pay: "підтягнути або створити оплату",
+    createPayment: "створити оплату",
+    warehouse: "передати на комплектацію",
+    picked: "підтвердити відбірку завскладом",
+    handoverDelivery: "передати замовлення логісту",
+    logisticsAccept: "логіст підтверджує передачу в доставку",
+    trackDelivery: "перевірити статус доставки за ТТН",
+    ship: "створити ТТН і відправити",
+    delivered: "підтвердити доставку",
+    complete: "завершити продаж",
+    followUp: "зробити післяпродажний контакт",
+    repeat: "запланувати повторний продаж"
+  };
+  return marketplaceOrderPendingActionKeys(order).map((key) => labels[key]).filter(Boolean);
+}
+
+function marketplaceOrderMissingFields(order) {
+  const buyer = marketplaceOrderBuyer(order || {});
+  const delivery = order.delivery || {};
+  const payment = order.payment || {};
+  const dates = order.dates || {};
+  const status = normalizeMarketplaceOrderStatus(order.status);
+  const warehouseFlow = order.warehouseFlow || {};
+  const deliveryProvider = deliveryProviderForOrder(order);
+  const lines = marketplaceOrderLines(order);
+  const issues = [];
+  const cancelled = status === "cancelled";
+  if (!String(order.date || "").trim()) addOrderIssue(issues, "date", "дата замовлення", "danger");
+  if (!String(order.marketplace || "").trim()) addOrderIssue(issues, "marketplace", "маркетплейс", "danger");
+  if (!lines.length || lines.some((line) => !line.productId || !byId(state.products, line.productId))) addOrderIssue(issues, "productId", "товари", "danger");
+  if (lines.some((line) => !String(line.sku || "").trim())) addOrderIssue(issues, "sku", "SKU", "warn");
+  if (!lines.length || lines.some((line) => !Number(line.qty || 0))) addOrderIssue(issues, "qty", "кількість", "danger");
+  if (!lines.length || lines.some((line) => !Number(line.price || 0))) addOrderIssue(issues, "price", "ціна", "danger");
+  if (!String(order.currency || lines[0]?.currency || "").trim()) addOrderIssue(issues, "currency", "валюта", "warn");
+  if (!String(order.manager || "").trim()) addOrderIssue(issues, "manager", "менеджер", "warn");
+  if (!String(buyer.name || "").trim()) addOrderIssue(issues, "buyerName", "покупець", "danger");
+  if (!String(buyer.phone || buyer.email || "").trim()) addOrderIssue(issues, "buyerContact", "телефон або email покупця", "danger");
+  if (statusAtLeast(status, "confirmed_by_client") && !cancelled && !order.clientId) addOrderIssue(issues, "clientId", "клієнт у CRM", "warn");
+  if (!String(delivery.service || "").trim()) addOrderIssue(issues, "deliveryService", "служба доставки", "warn");
+  if (statusAtLeast(status, "confirmed_by_client") && !cancelled) {
+    if (!String(delivery.city || "").trim()) addOrderIssue(issues, "deliveryCity", "місто доставки", "warn");
+    if (!String(delivery.warehouse || buyer.address || "").trim()) addOrderIssue(issues, "deliveryAddress", "відділення або адреса доставки", "warn");
+  }
+  if (statusAtLeast(status, "shipped") && !cancelled && !String(delivery.ttn || "").trim()) addOrderIssue(issues, "deliveryTtn", "ТТН", "danger");
+  if (statusAtLeast(status, "picked") && !cancelled && !warehouseFlow.pickingConfirmedAt) addOrderIssue(issues, "warehousePicking", "підтвердження відбірки завскладом", "danger");
+  if (statusAtLeast(status, "picked") && !cancelled && ["new", "sent_to_warehouse", "picked", ""].includes(delivery.status || "")) addOrderIssue(issues, "warehouseHandover", "передача логісту", "warn");
+  if ((statusAtLeast(status, "shipped") || ["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch"].includes(delivery.status || "")) && !cancelled && !warehouseFlow.logisticsAcceptedAt) addOrderIssue(issues, "logisticsAccepted", "підтвердження логіста", "danger");
+  if (statusAtLeast(status, "shipped") && !cancelled && !delivery.lastCheck) addOrderIssue(issues, "deliveryLastCheck", "перевірка статусу доставки", "warn");
+  if (statusAtLeast(status, "shipped") && !cancelled && deliveryProvider.enabled && !deliveryProvider.apiKey) addOrderIssue(issues, "deliveryApiKey", `API ключ ${deliveryProvider.provider}`, "danger");
+  if (!String(payment.method || "").trim()) addOrderIssue(issues, "paymentMethod", "метод оплати", "warn");
+  if (!Number(payment.amount || marketplaceOrderTotal(order) || 0)) addOrderIssue(issues, "paymentAmount", "сума оплати", "warn");
+  if (statusAtLeast(status, "paid") && !cancelled && payment.status !== "paid") addOrderIssue(issues, "paymentStatus", "оплата не підтверджена", "danger");
+  if (statusAtLeast(status, "confirmed_by_client") && !cancelled && !String(payment.source || "").trim()) addOrderIssue(issues, "paymentSource", "джерело оплати", "warn");
+  const dateRequirements = [
+    ["in_progress", "inProgress", "дата “В роботі”"],
+    ["confirmed_by_client", "agreed", "дата підтвердження клієнтом"],
+    ["paid", "paid", "дата оплати"],
+    ["picking", "warehouse", "дата передачі на склад"],
+    ["picked", "picked", "дата збірки"],
+    ["shipped", "delivery", "дата відправки"],
+    ["delivered", "delivered", "дата доставки"],
+    ["completed", "completed", "дата завершення"],
+    ["follow_up", "aftersale", "дата Follow-up"],
+    ["repeat_sale", "repeat", "дата повторного продажу"]
+  ];
+  dateRequirements.forEach(([stageId, dateKey, label]) => {
+    if (statusAtLeast(status, stageId) && !cancelled && !dates[dateKey]) addOrderIssue(issues, `date:${dateKey}`, label, "warn");
+  });
+  if (status === "waiting_client" && !dates.waitingClient) addOrderIssue(issues, "date:waitingClient", "дата очікування клієнта", "warn");
+  if (status === "waiting_payment" && !dates.paymentWaiting) addOrderIssue(issues, "date:paymentWaiting", "дата очікування оплати", "warn");
+  if (status === "upsell" && !dates.upsell) addOrderIssue(issues, "date:upsell", "дата апселу", "warn");
+  if (cancelled && !dates.cancelled) addOrderIssue(issues, "date:cancelled", "дата скасування", "warn");
+  if (!cancelled && workflowMetrics(order).urgency === "overdue") addOrderIssue(issues, "workflowSla", "прострочений SLA поточного статусу", "danger");
+  const pendingActions = marketplaceOrderPendingActionLabels(order);
+  if (pendingActions.length) addOrderIssue(issues, "pendingAction", "поточна дія статусу", "warn");
+  pendingActions.forEach((label, index) => addOrderIssue(issues, `action:${index}`, label, "warn"));
+  return issues;
+}
+
+function missingIssueLevel(issues, keys) {
+  const set = new Set(keys);
+  const found = issues.filter((issue) => set.has(issue.key));
+  if (!found.length) return "";
+  return found.some((issue) => issue.level === "danger") ? "danger" : "warn";
+}
+
+function orderCellClass(issues, keys) {
+  const level = missingIssueLevel(issues, keys);
+  return level ? ` class="cell-missing ${level}"` : "";
+}
+
+function orderFieldClass(issues, keys, base = "field") {
+  const level = missingIssueLevel(issues, keys);
+  return level ? `${base} field-missing ${level}` : base;
+}
+
+function orderActionClass(order, actionKey, base = "ghost") {
+  return `${base}${marketplaceOrderPendingActionKeys(order).includes(actionKey) ? " action-needed" : ""}`;
+}
+
+function marketplaceOrderDeliveryActionState(order) {
+  const status = normalizeMarketplaceOrderStatus(order.status);
+  const deliveryStatus = order.delivery?.status || "new";
+  const handedOver = ["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(deliveryStatus);
+  const logisticsAccepted = ["logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(deliveryStatus);
+  return {
+    canWarehouse: ["confirmed_by_client", "upsell", "waiting_payment", "paid", "picking"].includes(status),
+    canPicked: ["picking", "picked"].includes(status),
+    canHandover: status === "picked" && !handedOver,
+    canLogisticsAccept: status === "picked" && deliveryStatus === "warehouse_handover",
+    canTrack: ["shipped", "delivered"].includes(status) || logisticsAccepted
+  };
+}
+
+function renderOrderIssueSummary(order) {
+  const issues = marketplaceOrderMissingFields(order).filter((issue) => issue.key !== "pendingAction");
+  if (!issues.length) return '<p class="notice good small full">Усі обов’язкові атрибути та поточні дії виконані.</p>';
+  const danger = issues.filter((issue) => issue.level === "danger");
+  const warn = issues.filter((issue) => issue.level !== "danger");
   return `
-    <section class="grid four section-band">
-      <article class="card metric info"><span>Дебіторка</span><strong>${formatMoney(t.receivable)}</strong><small>Прив'язана до клієнтів, менеджерів та накладних.</small></article>
-      <article class="card metric good"><span>Отримані оплати</span><strong>${formatMoney(t.paid)}</strong><small>Каса, банк, валютні платежі з курсом дня.</small></article>
-      <article class="card metric warn"><span>Залишки у собівартості</span><strong>${formatMoney(t.stockValue)}</strong><small>Конвертація з валюти приходу у UAH.</small></article>
-      <article class="card metric danger"><span>Серійні одиниці в наявності</span><strong>${t.weaponAvailable}</strong><small>Заборонено продаж зброї без серії та дозволу.</small></article>
+    <div class="order-issues notice danger full">
+      <strong>Потрібно доповнити / виконати</strong>
+      <div class="issue-pill-list">
+        ${danger.map((issue) => `<span class="pill danger">${escapeHtml(issue.label)}</span>`).join("")}
+        ${warn.map((issue) => `<span class="pill warn">${escapeHtml(issue.label)}</span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderOrderIssueCompact(order) {
+  const issues = marketplaceOrderMissingFields(order).filter((issue) => issue.key !== "pendingAction");
+  if (!issues.length) return "";
+  const danger = issues.filter((issue) => issue.level === "danger").length;
+  return `<span class="pill ${danger ? "danger" : "warn"}">${issues.length} не виконано</span>`;
+}
+
+function marketplaceOrderIssueBuckets(order) {
+  const issues = marketplaceOrderMissingFields(order).filter((issue) => issue.key !== "pendingAction");
+  return {
+    issues,
+    danger: issues.filter((issue) => issue.level === "danger"),
+    warn: issues.filter((issue) => issue.level !== "danger")
+  };
+}
+
+function renderMarketplaceOrderProcessControl() {
+  const activeOrders = state.marketplaceOrders.filter((order) => !MARKETPLACE_FINAL_STATUSES.includes(normalizeMarketplaceOrderStatus(order.status)));
+  const rows = state.marketplaceOrders.map((order) => {
+    const buckets = marketplaceOrderIssueBuckets(order);
+    const metrics = workflowMetrics(order);
+    const actions = marketplaceOrderPendingActionLabels(order);
+    return { order, ...buckets, metrics, actions };
+  }).filter((row) => row.issues.length || row.metrics.urgency === "overdue");
+  const orderedRows = rows.sort((first, second) => {
+    const firstScore = (first.danger.length ? 100 : 0) + (first.metrics.urgency === "overdue" ? 50 : 0) + first.warn.length;
+    const secondScore = (second.danger.length ? 100 : 0) + (second.metrics.urgency === "overdue" ? 50 : 0) + second.warn.length;
+    return secondScore - firstScore;
+  }).slice(0, 12);
+  const blockerCount = rows.filter((row) => row.danger.length).length;
+  const overdueCount = rows.filter((row) => row.metrics.urgency === "overdue").length;
+  const actionCount = rows.filter((row) => row.actions.length).length;
+  return `
+    <section class="panel section-band">
+      <div class="split">
+        <h2>Контроль обробки замовлень</h2>
+        <span class="pill ${blockerCount || overdueCount ? "danger" : actionCount ? "warn" : "good"}">${rows.length} потребують уваги</span>
+      </div>
+      <div class="grid four">
+        <article class="card metric info"><span>Активні</span><strong>${activeOrders.length}</strong><small>Не завершені і не скасовані.</small></article>
+        <article class="card metric danger"><span>Блокери</span><strong>${blockerCount}</strong><small>Немає критичних реквізитів або прострочено SLA.</small></article>
+        <article class="card metric warn"><span>Дії менеджера</span><strong>${actionCount}</strong><small>Потрібне наступне ручне рішення.</small></article>
+        <article class="card metric danger"><span>SLA</span><strong>${overdueCount}</strong><small>Статуси з перевищеним терміном.</small></article>
+      </div>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead><tr><th>Замовлення</th><th>Статус</th><th>SLA</th><th>Що зробити</th><th>Не заповнено / не виконано</th></tr></thead>
+          <tbody>
+            ${orderedRows.map(({ order, danger, warn, metrics, actions }) => {
+              const buyer = marketplaceOrderBuyer(order);
+              const issueText = [...danger, ...warn].slice(0, 5).map((issue) => `<span class="pill ${issue.level === "danger" ? "danger" : "warn"}">${escapeHtml(issue.label)}</span>`).join("");
+              return `
+                <tr class="clickable-row ${danger.length || metrics.urgency === "overdue" ? "row-has-issues" : ""}" data-edit-marketplace-order="${escapeHtml(order.id)}" title="Відкрити замовлення">
+                  <td><strong>${escapeHtml(order.externalOrderId || order.id)}</strong><br><span class="small muted">${escapeHtml(order.marketplace || "-")} · ${escapeHtml(buyer.name || "-")}</span></td>
+                  <td>${marketplaceOrderStatusPill(order.status)}<br>${marketplacePaymentStatusPill(order.payment?.status)}</td>
+                  <td><span class="pill ${metrics.urgency === "overdue" ? "danger" : metrics.urgency === "soon" ? "warn" : "info"}">${escapeHtml(metrics.label)}</span><br><span class="small muted">до ${workflowDateTime(metrics.dueAt)}</span></td>
+                  <td>${actions.length ? actions.slice(0, 3).map((item) => `<span class="pill warn">${escapeHtml(item)}</span>`).join("") : '<span class="pill good">дій немає</span>'}</td>
+                  <td><div class="issue-pill-list">${issueText || '<span class="pill good">заповнено</span>'}</div></td>
+                </tr>
+              `;
+            }).join("") || '<tr><td colspan="5" class="muted">Критичних проблем у замовленнях немає.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function workflowDateTime(isoString) {
+  if (!isoString) return "-";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return String(isoString);
+  return date.toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function formatWorkflowHours(hours) {
+  const abs = Math.abs(Number(hours || 0));
+  if (abs < 1) return `${Math.max(1, Math.round(abs * 60))} хв`;
+  if (abs >= 24) return `${Math.round(abs / 24)} дн`;
+  return `${Math.round(abs)} год`;
+}
+
+function workflowMetrics(order) {
+  const stage = salesFunnelStage(order.status);
+  const startedAt = order.workflow?.stageStartedAt || dateToIso(order.dates?.[funnelDateKey(order.status)] || order.date || today);
+  const dueAt = addHoursIso(startedAt, stage.slaHours);
+  const remainingHours = (new Date(dueAt).getTime() - Date.now()) / 36e5;
+  const isDone = MARKETPLACE_FINAL_STATUSES.includes(order.status);
+  const urgency = isDone ? "done" : remainingHours < 0 ? "overdue" : remainingHours <= 2 ? "soon" : "ok";
+  const label = isDone
+    ? "цикл завершено"
+    : urgency === "overdue"
+      ? `прострочено на ${formatWorkflowHours(remainingHours)}`
+      : urgency === "soon"
+        ? `нагадати за ${formatWorkflowHours(remainingHours)}`
+        : `є ${formatWorkflowHours(remainingHours)}`;
+  return { stage, startedAt, dueAt, remainingHours, urgency, label };
+}
+
+function setMarketplaceOrderWorkflowStage(order, status, details = {}) {
+  const normalizedStatus = normalizeMarketplaceOrderStatus(status);
+  const stage = salesFunnelStage(normalizedStatus);
+  const dateKey = funnelDateKey(normalizedStatus);
+  order.status = normalizedStatus;
+  order.dates = {
+    created: order.date || today,
+    inProgress: "",
+    waitingClient: "",
+    agreed: "",
+    paymentWaiting: "",
+    warehouse: "",
+    picked: "",
+    delivery: "",
+    delivered: "",
+    completed: "",
+    paid: "",
+    upsell: "",
+    aftersale: "",
+    repeat: "",
+    cancelled: "",
+    ...(order.dates || {}),
+    [dateKey]: today
+  };
+  const startedAt = nowIso();
+  order.workflow = {
+    ...(order.workflow || {}),
+    stage: normalizedStatus,
+    stageStartedAt: startedAt,
+    reminderAt: addHoursIso(startedAt, stage.slaHours),
+    nextAction: details.nextAction || stage.reminder,
+    lastReminderAt: details.lastReminderAt || order.workflow?.lastReminderAt || ""
+  };
+}
+
+function runMarketplaceOrderAutomation(order, options = {}) {
+  if (!order) return null;
+  if (!order.manager || !state.managers.includes(order.manager)) {
+    order.manager = nextMarketplaceManager();
+  }
+  const client = ensureClientFromMarketplaceOrder(order);
+  const dates = {
+    created: order.date || today,
+    inProgress: "",
+    waitingClient: "",
+    agreed: "",
+    paymentWaiting: "",
+    warehouse: "",
+    picked: "",
+    delivery: "",
+    delivered: "",
+    completed: "",
+    paid: "",
+    upsell: "",
+    aftersale: "",
+    repeat: "",
+    cancelled: "",
+    ...(order.dates || {})
+  };
+  order.dates = dates;
+  order.status = normalizeMarketplaceOrderStatus(order.status || "new_order");
+  order.workflow = normalizeMarketplaceWorkflow(order, order.status, dates);
+  order.workflow.acceptedAt = order.workflow.acceptedAt || nowIso();
+  order.workflow.assignedAt = order.workflow.assignedAt || nowIso();
+  order.workflow.nextAction = salesFunnelStage(order.status).reminder;
+  order.notifiedAt = order.notifiedAt || currentTimestamp();
+  if (options.audit) {
+    addAudit(`CRM автоматично прийняла ${order.externalOrderId}: клієнт ${client.name}, менеджер ${order.manager}, етап ${salesFunnelStage(order.status).label}`, "system");
+  }
+  return client;
+}
+
+function bootstrapMarketplaceOrderAutomation() {
+  (state.marketplaceOrders || []).forEach((order) => runMarketplaceOrderAutomation(order, { audit: false }));
+}
+
+function marketplaceFunnelRows() {
+  return activeSalesFunnelStages().map((stage) => {
+    const orders = state.marketplaceOrders.filter((order) => order.status === stage.id);
+    const overdue = orders.filter((order) => workflowMetrics(order).urgency === "overdue").length;
+    return {
+      ...stage,
+      orders,
+      count: orders.length,
+      overdue
+    };
+  });
+}
+
+function renderFunnelHoverOrderList(stage) {
+  if (!stage.orders.length) {
+    return '<div class="funnel-hover-empty">Немає замовлень</div>';
+  }
+  return stage.orders.map((order) => {
+    const buyer = marketplaceOrderBuyer(order);
+    const metrics = workflowMetrics(order);
+    const overdue = metrics.urgency === "overdue";
+    return `
+      <button class="funnel-hover-order ${overdue ? "overdue" : ""}" type="button" data-edit-marketplace-order="${escapeHtml(order.id)}">
+        <span>
+          <strong>${escapeHtml(order.externalOrderId)}</strong>
+          <small>${escapeHtml(order.marketplace)} · ${escapeHtml(buyer.name || "Покупець")}</small>
+        </span>
+        <span>
+          <strong>${formatMoney(marketplaceOrderTotal(order), order.currency)}</strong>
+          <small>${overdue ? "прострочено" : workflowDateTime(metrics.dueAt)}</small>
+        </span>
+        ${renderOrderIssueCompact(order)}
+      </button>
+    `;
+  }).join("");
+}
+
+function renderMarketplaceFunnelBoard() {
+  return `
+    <section class="panel section-band dashboard-funnel-panel">
+      <div class="split">
+        <h2>Панель</h2>
+        <span class="pill info">${state.marketplaceOrders.length} замовлень</span>
+      </div>
+      <div class="funnel-grid">
+        ${marketplaceFunnelRows().map((stage) => `
+          <article class="funnel-card ${stage.overdue ? "overdue" : ""}" tabindex="0" ${stage.orders.length === 1 ? `data-open-funnel-order="${escapeHtml(stage.orders[0].id)}"` : ""} title="${stage.orders.length === 1 ? "Клікніть, щоб відкрити замовлення" : "Наведіть курсор, щоб побачити замовлення"}">
+            <span class="pill ${stage.overdue ? "danger" : stage.className}">${escapeHtml(stage.label)}</span>
+            <strong>${stage.count}</strong>
+            <small>${stage.overdue ? `${stage.overdue} прострочено` : `SLA ${stage.slaHours} год`}</small>
+            <div class="funnel-hover-menu" role="menu" aria-label="Замовлення: ${escapeHtml(stage.label)}">
+              <div class="funnel-hover-head">
+                <strong>${escapeHtml(stage.label)}</strong>
+                <span>${stage.count}</span>
+              </div>
+              ${renderFunnelHoverOrderList(stage)}
+            </div>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderOrderProcessStrip(order) {
+  const activeStages = activeSalesFunnelStages();
+  const currentIndex = Math.max(0, activeStages.findIndex((stage) => stage.id === order.status));
+  const metrics = workflowMetrics(order);
+  return `
+    <div class="process-strip" aria-label="Процес замовлення">
+      ${activeStages.map((stage, index) => {
+        const stateClass = index < currentIndex ? "complete" : index === currentIndex ? `current ${metrics.urgency}` : "pending";
+        return `<span class="process-step ${stateClass} ${stage.className}" title="${escapeHtml(stage.label)}"></span>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderOrderStatusRuleCard(order) {
+  const stage = salesFunnelStage(order.status);
+  return `
+    <div class="workflow-rule-card full">
+      <div class="split">
+        <strong>${escapeHtml(stage.label)}</strong>
+        <span class="pill ${stage.className}">SLA ${escapeHtml(stage.slaHours)} год</span>
+      </div>
+      <dl>
+        <div><dt>Де знаходиться</dt><dd>${escapeHtml(stage.menuLocation || "Продажі → Замовлення")}</dd></div>
+        <div><dt>Умова входу</dt><dd>${escapeHtml(stage.entryCondition || "")}</dd></div>
+        <div><dt>Умова виконання</dt><dd>${escapeHtml(stage.completionCondition || "")}</dd></div>
+        <div><dt>Перехід далі</dt><dd>${escapeHtml(stage.switchBy || "")}</dd></div>
+      </dl>
+    </div>
+  `;
+}
+
+function renderMarketplaceOrderControlActions(order) {
+  const canOrder = canManageMarketplaceOrder();
+  const canStatus = canChangeMarketplaceOrderStatus();
+  const canDelivery = canTrackMarketplaceDelivery();
+  const canPayment = canTrackMarketplacePayment();
+  const canSendWarehouse = canSendMarketplaceOrderToWarehouse();
+  const canPicking = canConfirmMarketplacePicking();
+  const canWarehouseHandover = canHandoverMarketplaceOrderToLogistics();
+  const canLogisticsAccept = canAcceptMarketplaceOrderLogistics();
+  const deliveryAction = marketplaceOrderDeliveryActionState(order);
+  return `
+    <div class="workflow-actions no-print">
+      ${renderOrderCommunicationButtons(order)}
+      <button class="ghost" data-run-order-automation="${escapeHtml(order.id)}" ${canOrder ? "" : "disabled"}>Авто</button>
+      <button class="${orderActionClass(order, "waitClient")}" data-marketplace-wait-client="${escapeHtml(order.id)}" ${canStatus && ["new_order", "in_progress", "waiting_client"].includes(order.status) ? "" : "disabled"}>Очікує клієнта</button>
+      <button class="${orderActionClass(order, "confirm")}" data-agree-marketplace-order="${escapeHtml(order.id)}" ${canStatus && ["new_order", "in_progress", "waiting_client"].includes(order.status) ? "" : "disabled"}>Підтверджено</button>
+      <button class="${orderActionClass(order, "waitPayment")}" data-marketplace-wait-payment="${escapeHtml(order.id)}" ${canStatus && order.payment?.status !== "paid" && ["confirmed_by_client", "upsell", "waiting_payment"].includes(order.status) ? "" : "disabled"}>Очікує оплату</button>
+      <button class="${orderActionClass(order, "pay", "secondary")}" data-pull-marketplace-payment="${escapeHtml(order.id)}" ${canPayment && order.status !== "cancelled" && order.payment?.status !== "paid" ? "" : "disabled"}>Оплатити</button>
+      <button class="${orderActionClass(order, "createPayment", "secondary")}" data-open-marketplace-payment="${escapeHtml(order.id)}" ${canCreateDocument("payment") && canEditField("payment") && order.status !== "cancelled" && order.payment?.status !== "paid" ? "" : "disabled"}>Створити оплату</button>
+      <button class="secondary" data-marketplace-upsell="${escapeHtml(order.id)}" ${canOrder && ["confirmed_by_client", "upsell", "waiting_payment", "paid"].includes(order.status) ? "" : "disabled"}>Апсел</button>
+      <button class="${orderActionClass(order, "warehouse")}" data-marketplace-to-warehouse="${escapeHtml(order.id)}" ${canSendWarehouse && deliveryAction.canWarehouse ? "" : "disabled"}>На відбірку</button>
+      <button class="${orderActionClass(order, "picked")}" data-marketplace-picked="${escapeHtml(order.id)}" ${canPicking && deliveryAction.canPicked ? "" : "disabled"}>Відбірка ОК</button>
+      <button class="${orderActionClass(order, "handoverDelivery", "secondary")}" data-marketplace-handover-delivery="${escapeHtml(order.id)}" ${canWarehouseHandover && deliveryAction.canHandover ? "" : "disabled"}>Передати логісту</button>
+      <button class="${orderActionClass(order, "logisticsAccept", "secondary")}" data-marketplace-to-delivery="${escapeHtml(order.id)}" ${canLogisticsAccept && deliveryAction.canLogisticsAccept ? "" : "disabled"}>Логіст прийняв</button>
+      <button class="${orderActionClass(order, "trackDelivery", "secondary")}" data-track-marketplace-delivery="${escapeHtml(order.id)}" ${canDelivery && deliveryAction.canTrack ? "" : "disabled"}>Статус доставки</button>
+      <button class="${orderActionClass(order, "complete")}" data-marketplace-complete="${escapeHtml(order.id)}" ${canOrder && ["delivered", "completed"].includes(order.status) ? "" : "disabled"}>Завершено</button>
+      <button class="${orderActionClass(order, "followUp")}" data-marketplace-aftersale="${escapeHtml(order.id)}" ${canOrder && ["completed", "follow_up"].includes(order.status) ? "" : "disabled"}>Follow-up</button>
+      <button class="${orderActionClass(order, "repeat")}" data-marketplace-repeat-sale="${escapeHtml(order.id)}" ${canOrder && ["follow_up", "repeat_sale"].includes(order.status) ? "" : "disabled"}>Повтор</button>
+      <button class="ghost" data-remind-marketplace-order="${escapeHtml(order.id)}" ${canOrder ? "" : "disabled"}>Нагадати</button>
+      <button class="danger" data-marketplace-cancel="${escapeHtml(order.id)}" ${canOrder && !MARKETPLACE_FINAL_STATUSES.includes(order.status) ? "" : "disabled"}>Скасовано</button>
+    </div>
+  `;
+}
+
+function renderOrderCommunicationButtons(order) {
+  const buyer = marketplaceOrderBuyer(order);
+  const canContact = canContactMarketplaceBuyer();
+  return `
+    <button class="secondary" type="button" data-open-order-callback="${escapeHtml(order.id)}" ${canContact && buyer.phone ? "" : "disabled"}>Передзвонити</button>
+    <button class="secondary" type="button" data-open-order-message="${escapeHtml(order.id)}" ${canContact && (buyer.phone || buyer.email || viberReceiver(order)) ? "" : "disabled"}>Написати</button>
+  `;
+}
+
+function renderWorkflowOrderCard(order) {
+  const buyer = marketplaceOrderBuyer(order);
+  const metrics = workflowMetrics(order);
+  const stock = marketplaceOrderStockControl(order);
+  return `
+    <article class="workflow-order ${metrics.urgency}">
+      <div class="split">
+        <strong>${escapeHtml(order.externalOrderId)}</strong>
+        ${marketplaceOrderStatusPill(order.status)}
+      </div>
+      ${renderOrderProcessStrip(order)}
+      <p class="small muted">${escapeHtml(buyer.name || "Покупець")} · ${escapeHtml(buyer.phone || "-")}</p>
+      <p class="small">${formatMoney(marketplaceOrderTotal(order), order.currency)} · ${escapeHtml(marketplaceOrderProductsSummary(order))}</p>
+      <div class="workflow-badges">
+        <span class="pill ${metrics.urgency === "overdue" ? "danger" : metrics.urgency === "soon" ? "warn" : "good"}">${escapeHtml(metrics.label)}</span>
+        <span class="pill ${stock.className}">${escapeHtml(stock.label)}</span>
+        ${renderOrderIssueCompact(order)}
+      </div>
+      <p class="small muted">До: ${workflowDateTime(metrics.dueAt)} · ${escapeHtml(order.workflow?.nextAction || metrics.stage.reminder)}</p>
+      ${renderMarketplaceOrderControlActions(order)}
+    </article>
+  `;
+}
+
+function renderManagerSalesFunnel() {
+  const selectedManager = marketplaceFunnelManager();
+  const orders = state.marketplaceOrders.filter((order) => selectedManager === "__all" || order.manager === selectedManager);
+  const overdueCount = orders.filter((order) => workflowMetrics(order).urgency === "overdue").length;
+  const soonCount = orders.filter((order) => workflowMetrics(order).urgency === "soon").length;
+  return `
+    <section class="panel section-band manager-funnel-section">
+      <div class="split">
+        <div>
+          <h2>Менеджерська воронка продажів</h2>
+          <p class="small muted">Автоприйом замовлення → клієнт → менеджер → оплата → склад → доставка → апсел → післяпродаж → повторний продаж.</p>
+        </div>
+        <form class="manager-funnel-filter no-print" data-manager-funnel-filter>
+          <label class="field compact"><span>Менеджер</span><select name="manager" data-manager-funnel-select>
+            ${option("__all", "Усі менеджери", selectedManager === "__all")}
+            ${state.managers.map((manager) => option(manager, manager, selectedManager === manager)).join("")}
+          </select></label>
+        </form>
+      </div>
+      <div class="workflow-summary">
+        <span class="pill info">${orders.length} у контролі</span>
+        <span class="pill ${overdueCount ? "danger" : "good"}">${overdueCount} прострочено</span>
+        <span class="pill ${soonCount ? "warn" : "good"}">${soonCount} нагадати скоро</span>
+      </div>
+      <div class="manager-funnel-board">
+        ${activeSalesFunnelStages().map((stage) => {
+          const stageOrders = orders.filter((order) => order.status === stage.id);
+          return `
+            <section class="funnel-column ${stage.className}">
+              <header>
+                <span class="pill ${stage.className}">${escapeHtml(stage.label)}</span>
+                <strong>${stageOrders.length}</strong>
+                <small>SLA ${stage.slaHours} год</small>
+              </header>
+              <div class="funnel-column-list">
+                ${stageOrders.map(renderWorkflowOrderCard).join("") || '<p class="small muted">Немає замовлень.</p>'}
+              </div>
+            </section>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function communicatorSettings() {
+  state.settings.communicators = {
+    ...clone(seedState.settings.communicators),
+    ...(state.settings.communicators || {}),
+    viber: {
+      ...clone(seedState.settings.communicators.viber),
+      ...(state.settings.communicators?.viber || {})
+    },
+    callRecording: {
+      ...clone(seedState.settings.communicators.callRecording),
+      ...(state.settings.communicators?.callRecording || {})
+    }
+  };
+  return state.settings.communicators;
+}
+
+function viberSettings() {
+  return communicatorSettings().viber;
+}
+
+function callRecordingSettings() {
+  return communicatorSettings().callRecording;
+}
+
+function viberReceiver(order) {
+  const buyer = marketplaceOrderBuyer(order);
+  return order.viberReceiver || buyer.viberId || buyer.phone || "";
+}
+
+function fillViberTemplate(template, order) {
+  const buyer = marketplaceOrderBuyer(order);
+  const stage = salesFunnelStage(order.status);
+  return String(template || seedState.settings.communicators.viber.defaultTemplate)
+    .replaceAll("{buyer}", buyer.name || "покупець")
+    .replaceAll("{order}", order.externalOrderId || "")
+    .replaceAll("{status}", stage.label || order.status || "")
+    .replaceAll("{manager}", order.manager || state.currentManager || "");
+}
+
+function viberMessagesForOrder(order) {
+  return (state.viberMessages || []).filter((message) => message.orderId === order.id);
+}
+
+function communicationEventsForOrder(order) {
+  return (state.communicationEvents || []).filter((event) => event.orderId === order.id);
+}
+
+function orderDefaultMessage(order) {
+  return fillViberTemplate(viberSettings().defaultTemplate, order);
+}
+
+function cleanPhone(phone = "") {
+  return String(phone || "").replace(/[^\d+]/g, "");
+}
+
+function messengerPhone(phone = "") {
+  return cleanPhone(phone).replace(/^\+/, "");
+}
+
+function communicationReceiver(order, channel) {
+  const buyer = marketplaceOrderBuyer(order);
+  if (channel === "email") return buyer.email || "";
+  if (channel === "viber") return viberReceiver(order);
+  return buyer.phone || "";
+}
+
+function communicatorLabel(channel) {
+  const labels = {
+    phone: "Телефон",
+    ip_telephony: "IP-телефонія",
+    viber: "Viber",
+    sms: "SMS",
+    email: "Email",
+    whatsapp: "WhatsApp",
+    telegram: "Telegram"
+  };
+  return labels[channel] || channel || "комунікатор";
+}
+
+function communicatorOptions(order, kind, selected = "") {
+  const buyer = marketplaceOrderBuyer(order);
+  const phone = buyer.phone || "";
+  const email = buyer.email || "";
+  const receiver = viberReceiver(order);
+  const options = kind === "call"
+    ? [
+        ["phone", "Телефон", phone],
+        ["ip_telephony", "IP-телефонія/API", phone],
+        ["viber", "Viber", receiver]
+      ]
+    : [
+        ["viber", "Viber", receiver],
+        ["sms", "SMS", phone],
+        ["email", "Email", email],
+        ["whatsapp", "WhatsApp", phone],
+        ["telegram", "Telegram", phone]
+      ];
+  const available = options.filter(([, , value]) => value);
+  return (available.length ? available : options).map(([value, label, receiverValue]) => option(
+    value,
+    `${label}${receiverValue ? ` · ${receiverValue}` : ""}`,
+    value === selected || (!selected && receiverValue && value === available[0]?.[0])
+  )).join("");
+}
+
+const MARKETPLACE_CUSTOMER_QUESTION_TYPES = [
+  ["order_question", "Питання про замовлення"],
+  ["seller_question", "Запитання продавцю"],
+  ["call_center", "Звернення в Call Center"],
+  ["return_request", "Заявки на повернення"],
+  ["archived", "Архів"]
+];
+
+function marketplaceCustomerQuestionTypeLabel(type) {
+  return MARKETPLACE_CUSTOMER_QUESTION_TYPES.find(([id]) => id === type)?.[1] || type || "Повідомлення";
+}
+
+function marketplaceQuestionStatusPill(status) {
+  return statusPill(status || "new");
+}
+
+function marketplaceQuestionOrder(question) {
+  if (question.orderId) {
+    const order = byId(state.marketplaceOrders, question.orderId);
+    if (order) return order;
+  }
+  const externalOrderId = String(question.externalOrderId || "").trim();
+  if (!externalOrderId) return null;
+  return state.marketplaceOrders.find((order) => order.externalOrderId === externalOrderId || order.externalOrderId === `RZ-${externalOrderId}`);
+}
+
+function marketplaceQuestionTemplateOptions(selected = "") {
+  return (state.marketplaceMessageTemplates || []).map((template) => option(template.id, template.name, template.id === selected)).join("");
+}
+
+function fillMarketplaceReplyTemplate(templateText, item = {}) {
+  return String(templateText || "")
+    .replaceAll("{order}", item.externalOrderId || "")
+    .replaceAll("{buyer}", item.buyerName || "покупець")
+    .replaceAll("{marketplace}", item.marketplace || "маркетплейс");
+}
+
+function renderMarketplaceCustomerQuestionTypeCards(questions, selectedType = "order_question") {
+  return `
+    <div class="marketplace-comm-menu">
+      ${MARKETPLACE_CUSTOMER_QUESTION_TYPES.map(([type, label]) => {
+        const rows = questions.filter((item) => item.sourceType === type);
+        const openRows = rows.filter((item) => !["answered", "archived", "closed"].includes(item.status));
+        const active = selectedType === type;
+        return `
+          <button class="marketplace-comm-card ${active ? "active" : ""}" type="button" data-marketplace-question-type="${escapeHtml(type)}" aria-pressed="${active ? "true" : "false"}">
+            <strong>${escapeHtml(label)}</strong>
+            <span class="pill ${openRows.length ? "warn" : "good"}">${openRows.length} активних</span>
+            <small>${rows.length} всього</small>
+            <em>Відкрити список</em>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderMarketplaceCustomerQuestionRows(rows) {
+  const canReply = canContactMarketplaceBuyer() && canCreateDocument("marketplaceCustomerQuestions");
+  if (!rows.length) return '<tr><td colspan="6" class="muted">Питань з маркетплейсів ще немає.</td></tr>';
+  return rows.map((question) => {
+    const order = marketplaceQuestionOrder(question);
+    return `
+      <tr class="clickable-row" data-open-marketplace-question="${escapeHtml(question.id)}" title="Клікніть, щоб відповісти">
+        <td>
+          <strong>${escapeHtml(marketplaceCustomerQuestionTypeLabel(question.sourceType))}</strong><br>
+          <span class="small muted">${escapeHtml(question.createdAt || "-")}</span>
+        </td>
+        <td>${escapeHtml(question.marketplace || "-")}<br><span class="small muted">${escapeHtml(question.externalId || question.chatId || question.requestId || "-")}</span></td>
+        <td>
+          <strong>${escapeHtml(question.externalOrderId || order?.externalOrderId || "без замовлення")}</strong><br>
+          <span class="small muted">${escapeHtml(question.buyerName || marketplaceOrderBuyer(order || {}).name || "покупець")} · ${escapeHtml(question.buyerContact || "")}</span>
+        </td>
+        <td>
+          <strong>${escapeHtml(question.subject || "-")}</strong><br>
+          <span class="small">${escapeHtml(question.message || "")}</span>
+          ${question.answer ? `<br><span class="small muted">Відповідь: ${escapeHtml(question.answer)}</span>` : ""}
+        </td>
+        <td>${marketplaceQuestionStatusPill(question.status)}<br><span class="small muted">${escapeHtml(question.apiStatus || "")}</span></td>
+        <td>
+          <div class="row-actions no-print">
+            <button class="secondary" type="button" data-reply-marketplace-question="${escapeHtml(question.id)}" ${canReply ? "" : "disabled"}>Відповісти</button>
+            <button class="ghost" type="button" data-edit-marketplace-order="${escapeHtml(order?.id || "")}" ${order ? "" : "disabled"}>Замовлення</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderMarketplaceServiceThreadRows(rows) {
+  const canReply = canContactMarketplaceBuyer() && canCreateDocument("marketplaceServiceThreads");
+  if (!rows.length) return '<tr><td colspan="5" class="muted">Переписки з маркетплейсом ще немає.</td></tr>';
+  return rows.map((thread) => `
+    <tr class="clickable-row" data-open-marketplace-thread="${escapeHtml(thread.id)}" title="Клікніть, щоб відповісти маркетплейсу">
+      <td><strong>${escapeHtml(thread.marketplace || "-")}</strong><br><span class="small muted">${escapeHtml(thread.externalId || thread.requestId || "-")}</span></td>
+      <td><strong>${escapeHtml(thread.subject || "-")}</strong><br><span class="small">${escapeHtml(thread.message || "")}</span></td>
+      <td>${statusPill(thread.status || "open")}<br><span class="small muted">${escapeHtml(thread.apiStatus || "")}</span></td>
+      <td>${escapeHtml(thread.manager || "-")}<br><span class="small muted">${escapeHtml(thread.updatedAt || thread.createdAt || "-")}</span></td>
+      <td>
+        <div class="row-actions no-print">
+          <button class="secondary" type="button" data-reply-marketplace-thread="${escapeHtml(thread.id)}" ${canReply ? "" : "disabled"}>Відповісти</button>
+        </div>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function recordingsForOrder(order) {
+  return (state.callRecordings || []).filter((recording) => recording.orderId === order.id);
+}
+
+function renderViberHistory(order) {
+  const messages = viberMessagesForOrder(order).slice(0, 3);
+  if (!messages.length) return '<span class="small muted">Viber історії ще немає.</span>';
+  return messages.map((message) => `
+    <div class="comm-log-item">
+      <strong>${escapeHtml(message.status)}</strong>
+      <span class="small muted">${escapeHtml(message.at)} · ${escapeHtml(message.receiver || "-")}</span>
+      <span class="small">${escapeHtml(message.text)}</span>
+    </div>
+  `).join("");
+}
+
+function renderCommunicationHistory(order) {
+  const events = communicationEventsForOrder(order).slice(0, 4);
+  if (!events.length) return '<span class="small muted">Подій зв’язку ще немає.</span>';
+  return events.map((event) => `
+    <div class="comm-log-item">
+      <strong>${escapeHtml(event.type === "call" ? "Дзвінок" : "Повідомлення")} · ${escapeHtml(communicatorLabel(event.channel))}</strong>
+      <span class="small muted">${escapeHtml(event.at || "")} · ${escapeHtml(event.status || "")}</span>
+      ${event.text ? `<span class="small">${escapeHtml(event.text)}</span>` : ""}
+    </div>
+  `).join("");
+}
+
+function renderRecordingHistory(order) {
+  const rows = recordingsForOrder(order).slice(0, 2);
+  if (!rows.length) return '<span class="small muted">Записів ще немає.</span>';
+  return rows.map((recording) => `
+    <div class="recording-item">
+      <div class="row-main">
+        <strong>${escapeHtml(recording.startedAt || recording.at)}</strong>
+        <button class="ghost danger no-print" type="button" data-delete-call-recording="${escapeHtml(recording.id)}">Видалити</button>
+      </div>
+      <span class="small muted">${escapeHtml(recording.manager || "-")} · ${Math.round(Number(recording.durationMs || 0) / 1000)} с · ${escapeHtml(recording.consent ? "згода підтверджена" : "без позначки згоди")}</span>
+      ${recording.dataUrl ? `<audio controls src="${escapeHtml(recording.dataUrl)}"></audio>` : `<span class="small muted">${escapeHtml(recording.url || "аудіо не збережено")}</span>`}
+    </div>
+  `).join("");
+}
+
+function renderOrderCommunicationHub() {
+  const settings = communicatorSettings();
+  const activeOrderId = activeCallMeta?.orderId || "";
+  const customerQuestions = [...(state.marketplaceCustomerQuestions || [])].sort((first, second) => String(second.updatedAt || second.createdAt || "").localeCompare(String(first.updatedAt || first.createdAt || "")));
+  const serviceThreads = [...(state.marketplaceServiceThreads || [])].sort((first, second) => String(second.updatedAt || second.createdAt || "").localeCompare(String(first.updatedAt || first.createdAt || "")));
+  const communicationFilter = marketplaceCommunicationFilter();
+  const selectedQuestionType = MARKETPLACE_CUSTOMER_QUESTION_TYPES.some(([type]) => type === communicationFilter.questionType)
+    ? communicationFilter.questionType
+    : "order_question";
+  const selectedQuestionLabel = marketplaceCustomerQuestionTypeLabel(selectedQuestionType);
+  const visibleCustomerQuestions = customerQuestions.filter((item) => item.sourceType === selectedQuestionType);
+  const openCustomerQuestions = customerQuestions.filter((item) => !["answered", "archived", "closed"].includes(item.status)).length;
+  const openServiceThreads = serviceThreads.filter((item) => !["answered", "archived", "closed"].includes(item.status)).length;
+  return `
+    <section class="panel section-band communication-hub">
+      <div class="split">
+        <div>
+          <h2>2.5 Комунікація з покупцями по замовленнях</h2>
+          <p class="small muted">Питання покупців до і після замовлення, відповіді через маркетплейс, Viber, дзвінки, записи розмов і історія контакту.</p>
+        </div>
+        <div class="workflow-summary no-print">
+          <span class="pill ${openCustomerQuestions ? "warn" : "good"}">${openCustomerQuestions} питань</span>
+          <span class="pill ${openServiceThreads ? "warn" : "good"}">${openServiceThreads} ROZETKA</span>
+          <span class="pill ${settings.viber.enabled ? "good" : "warn"}">Viber ${settings.viber.enabled ? "увімкнено" : "вимкнено"}</span>
+          <span class="pill ${settings.callRecording.enabled ? "good" : "warn"}">Запис ${settings.callRecording.enabled ? "увімкнено" : "вимкнено"}</span>
+          <span class="pill info">${state.callRecordings.length} записів</span>
+        </div>
+      </div>
+      <p class="notice small">Rozetka API: питання покупців завантажуються через <code>/messages/search</code>, відповідь покупцю може йти через <code>/messages/create</code>; звернення Call Center та комунікація з ROZETKA підтягуються окремо. Viber у тестовому режимі фіксується локально.</p>
+      <div class="grid two marketplace-communication-blocks">
+        <article class="api-box">
+          <div class="split">
+            <h3>Переписка з клієнтами</h3>
+            <span class="pill ${openCustomerQuestions ? "warn" : "good"}">${customerQuestions.length} рядків</span>
+          </div>
+          ${renderMarketplaceCustomerQuestionTypeCards(customerQuestions, selectedQuestionType)}
+          <div class="communication-list-head" data-marketplace-question-list>
+            <div>
+              <strong>${escapeHtml(selectedQuestionLabel)}</strong>
+              <span class="small muted">Клікніть рядок або кнопку «Відповісти», щоб відкрити форму відповіді через маркетплейс.</span>
+            </div>
+            <span class="pill info">${visibleCustomerQuestions.length}/${customerQuestions.length}</span>
+          </div>
+          <div class="table-wrap compact-table">
+            <table>
+              <thead><tr><th>Блок</th><th>Маркетплейс</th><th>Замовлення / покупець</th><th>Питання</th><th>Статус</th><th>Дії</th></tr></thead>
+              <tbody>${renderMarketplaceCustomerQuestionRows(visibleCustomerQuestions)}</tbody>
+            </table>
+          </div>
+        </article>
+        <article class="api-box">
+          <div class="split">
+            <h3>Переписка з ROZETKA</h3>
+            <span class="pill ${openServiceThreads ? "warn" : "good"}">${serviceThreads.length} рядків</span>
+          </div>
+          <p class="small muted">Окремий блок для питань до маркетплейсу: API, модерація, кабінет продавця, звернення служб підтримки та статуси запитів. Клікніть рядок або кнопку «Відповісти».</p>
+          <div class="table-wrap compact-table">
+            <table>
+              <thead><tr><th>Маркетплейс</th><th>Тема</th><th>Статус</th><th>Менеджер</th><th>Дії</th></tr></thead>
+              <tbody>${renderMarketplaceServiceThreadRows(serviceThreads)}</tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+      <div class="api-box marketplace-template-box">
+        <div class="split">
+          <h3>Шаблони повідомлень</h3>
+          <span class="pill info">${(state.marketplaceMessageTemplates || []).length} шаблонів</span>
+        </div>
+        <div class="marketplace-template-list">
+          ${(state.marketplaceMessageTemplates || []).map((template) => `
+            <article class="comm-log-item">
+              <strong>${escapeHtml(template.name)}</strong>
+              <span class="small">${escapeHtml(template.text)}</span>
+            </article>
+          `).join("") || '<span class="small muted">Шаблонів ще немає.</span>'}
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Замовлення</th><th>Покупець</th><th>Viber</th><th>Дзвінок / запис</th><th>Наступний контакт</th><th>Історія</th></tr></thead>
+          <tbody>
+            ${state.marketplaceOrders.map((order) => {
+              const buyer = marketplaceOrderBuyer(order);
+              const topic = salesFunnelStage(order.status).reminder || (order.delivery?.ttn ? "Надіслати статус доставки" : "Погодити адресу та ТТН");
+              const receiver = viberReceiver(order);
+              const isRecording = activeOrderId === order.id;
+              return `
+                <tr>
+                  <td><strong>${escapeHtml(order.externalOrderId)}</strong><br><span class="small muted">${escapeHtml(order.marketplace)} · ${marketplaceOrderStatusPill(order.status)}</span></td>
+                  <td>${escapeHtml(buyer.name)}<br><span class="small muted">${escapeHtml(buyer.phone || "-")} · ${escapeHtml(buyer.email || "-")}</span></td>
+                  <td>
+                    <span class="small muted">Receiver: ${escapeHtml(receiver || "не задано")}</span>
+                    <div class="row-actions no-print">
+                      <button class="secondary" type="button" data-send-viber-order="${escapeHtml(order.id)}" ${settings.viber.enabled && receiver ? "" : "disabled"}>Viber</button>
+                      <button class="ghost" type="button" data-open-viber-chat="${escapeHtml(order.id)}" ${buyer.phone ? "" : "disabled"}>Відкрити</button>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="row-actions no-print">
+                      <button class="secondary" type="button" data-start-call-recording="${escapeHtml(order.id)}" ${settings.callRecording.enabled && !activeCallRecorder ? "" : "disabled"}>Почати запис</button>
+                      <button class="danger" type="button" data-stop-call-recording="${escapeHtml(order.id)}" ${isRecording ? "" : "disabled"}>Стоп</button>
+                    </div>
+                    <span class="small muted">${isRecording ? "йде запис розмови" : settings.callRecording.consentRequired ? "потрібна згода покупця" : "запис без обов'язкової позначки згоди"}</span>
+                  </td>
+                  <td>${escapeHtml(topic)}<br><span class="small muted">Менеджер: ${escapeHtml(order.manager || "-")}</span></td>
+                  <td>
+                    <div class="comm-history">
+                      ${renderCommunicationHistory(order)}
+                      ${renderViberHistory(order)}
+                      ${renderRecordingHistory(order)}
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join("") || '<tr><td colspan="6" class="muted">Поки немає покупців для комунікації.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderStatusChangeFeed(limit = 12) {
+  const orderEvents = state.marketplaceOrders.flatMap((order) => [
+    { at: order.dates?.created || order.date, actor: order.manager, action: `${order.marketplace}: нове замовлення ${order.externalOrderId}` },
+    order.dates?.inProgress ? { at: order.dates.inProgress, actor: order.manager, action: `${order.externalOrderId}: взято в роботу` } : null,
+    order.dates?.waitingClient ? { at: order.dates.waitingClient, actor: order.manager, action: `${order.externalOrderId}: очікує підтвердження клієнта` } : null,
+    order.dates?.agreed ? { at: order.dates.agreed, actor: order.manager, action: `${order.externalOrderId}: підтверджено клієнтом` } : null,
+    order.dates?.upsell ? { at: order.dates.upsell, actor: order.manager, action: `${order.externalOrderId}: апсел / крос-сел` } : null,
+    order.dates?.paymentWaiting ? { at: order.dates.paymentWaiting, actor: order.manager, action: `${order.externalOrderId}: очікує оплату` } : null,
+    order.dates?.paid ? { at: order.dates.paid, actor: order.manager, action: `${order.externalOrderId}: оплачено` } : null,
+    order.dates?.warehouse ? { at: order.dates.warehouse, actor: order.manager, action: `${order.externalOrderId}: на комплектації` } : null,
+    order.dates?.picked ? { at: order.dates.picked, actor: order.manager, action: `${order.externalOrderId}: зібрано` } : null,
+    order.dates?.delivery ? { at: order.dates.delivery, actor: order.manager, action: `${order.externalOrderId}: відправлено` } : null,
+    order.dates?.delivered ? { at: order.dates.delivered, actor: order.manager, action: `${order.externalOrderId}: доставлено` } : null,
+    order.dates?.completed ? { at: order.dates.completed, actor: order.manager, action: `${order.externalOrderId}: завершено` } : null,
+    order.dates?.aftersale ? { at: order.dates.aftersale, actor: order.manager, action: `${order.externalOrderId}: Follow-up` } : null,
+    order.dates?.repeat ? { at: order.dates.repeat, actor: order.manager, action: `${order.externalOrderId}: повторний продаж` } : null,
+    order.dates?.cancelled ? { at: order.dates.cancelled, actor: order.manager, action: `${order.externalOrderId}: скасовано` } : null
+  ].filter(Boolean));
+  const publicationEvents = state.marketplacePublications.map((publication) => ({
+    at: publication.lastSync || today,
+    actor: publication.manager,
+    action: `${publication.marketplace}: публікація ${publication.sku} — ${publication.status}`
+  }));
+  const events = [...orderEvents, ...publicationEvents, ...state.audit]
+    .sort((first, second) => String(second.at).localeCompare(String(first.at)))
+    .slice(0, limit);
+  return `
+    <div class="timeline">
+      ${events.map((item) => `
+        <div class="timeline-item">
+          <strong>${escapeHtml(item.action)}</strong>
+          <span class="small muted">${escapeHtml(item.at || "-")} · ${escapeHtml(item.actor || "system")}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderDashboard() {
+  return renderMarketplaceFunnelBoard();
+}
+
+function retailStoreWarehouseId() {
+  const warehouse = state.warehouses.find((item) => item.kind === "retail") || byId(state.warehouses, "wh-store") || state.warehouses[0];
+  return warehouse?.id || "wh-store";
+}
+
+function retailStoreClient() {
+  return state.clients.find((client) => client.type === "Retail") || state.clients[0] || {};
+}
+
+function retailPriceTypeId() {
+  return priceTypeById("retail")?.id || priceTypeById("Роздріб")?.id || activeSalePriceTypes()[0]?.id || "";
+}
+
+function retailStoreInvoiceMatches(invoice = {}) {
+  const warehouseId = retailStoreWarehouseId();
+  return invoice.channel === "Магазин" || invoice.warehouseId === warehouseId || invoice.sourceWarehouseId === warehouseId;
+}
+
+function retailStoreInvoices(period = null) {
+  return state.invoices
+    .filter(retailStoreInvoiceMatches)
+    .filter((invoice) => !period || dateInPeriod(invoice.date, period))
+    .sort((first, second) => String(second.date || "").localeCompare(String(first.date || ""), "uk") || String(second.id || "").localeCompare(String(first.id || ""), "uk"));
+}
+
+function retailStorePayments(invoices = []) {
+  const invoiceIds = new Set(invoices.map((invoice) => invoice.id));
+  return state.payments
+    .filter((payment) => invoiceIds.has(payment.invoiceId))
+    .sort((first, second) => String(second.date || "").localeCompare(String(first.date || ""), "uk"));
+}
+
+function retailStoreStockRows() {
+  const warehouseId = retailStoreWarehouseId();
+  return inventoryRows()
+    .filter((row) => row.warehouseId === warehouseId)
+    .sort((first, second) => Number(first.qty || 0) - Number(second.qty || 0) || productName(first.product?.id || first.productId).localeCompare(productName(second.product?.id || second.productId), "uk"));
+}
+
+function retailSaleDraftDefaults() {
+  const client = retailStoreClient();
+  const firmId = state.settings.firms.some((firm) => firm.id === saleDraft.firmId) && saleDraft.channel === "Магазин"
+    ? saleDraft.firmId
+    : (state.settings.firms[0]?.id || "vat");
+  const warehouseId = state.warehouses.some((warehouse) => warehouse.id === saleDraft.warehouseId) && saleDraft.channel === "Магазин"
+    ? saleDraft.warehouseId
+    : retailStoreWarehouseId();
+  const priceType = saleDraft.channel === "Магазин" && priceTypeById(saleDraft.priceType)
+    ? saleDraft.priceType
+    : (priceTypeById(client.priceType)?.id || retailPriceTypeId());
+  const terminals = paymentTerminalsForFirm(firmId);
+  return {
+    date: saleDraft.channel === "Магазин" ? (saleDraft.date || today) : today,
+    documentType: saleDraft.channel === "Магазин" ? (saleDraft.documentType || "Реалізація") : "Реалізація",
+    warehouseId,
+    firmId,
+    channel: "Магазин",
+    clientId: saleDraft.channel === "Магазин" && byId(state.clients, saleDraft.clientId) ? saleDraft.clientId : (client.id || ""),
+    priceType,
+    paymentMode: saleDraft.channel === "Магазин" ? (saleDraft.paymentMode || "Оплачено") : "Оплачено",
+    paymentSource: saleDraft.channel === "Магазин" ? (saleDraft.paymentSource || "cash") : "cash",
+    terminalId: saleDraft.channel === "Магазин" && terminals.some((terminal) => terminal.id === saleDraft.terminalId) ? saleDraft.terminalId : (terminals[0]?.id || ""),
+    prro: saleDraft.channel === "Магазин" ? (saleDraft.prro || "true") : "true",
+    manager: saleDraft.channel === "Магазин" ? (saleDraft.manager || state.currentManager) : state.currentManager,
+    comment: saleDraft.channel === "Магазин" ? (saleDraft.comment || "") : ""
+  };
+}
+
+function retailDraftTotals(lines, priceType) {
+  const invoiceLines = lines.map((line) => {
+    const price = saleLinePrice(line, priceType);
+    return {
+      qty: parseDecimal(line.qty || 1, 1),
+      price: parseDecimal(price.amount || 0, 0),
+      currency: price.currency || "UAH",
+      discount: parseDecimal(line.discount || 0, 0)
+    };
+  });
+  return invoiceTotalsFromLines(invoiceLines);
+}
+
+function renderRetailSaleForm() {
+  const defaults = retailSaleDraftDefaults();
+  const lines = saleDraftLines();
+  const totals = retailDraftTotals(lines, defaults.priceType);
+  const paidValue = saleDraft.channel === "Магазин" && saleDraft.paid !== undefined && saleDraft.paid !== "" ? saleDraft.paid : totals.total;
+  const canSellWeapon = !lines.some((line) => byId(state.products, line.productId)?.type === "weapon") || role().canSellWeapon;
+  const terminalOptions = paymentTerminalsForFirm(defaults.firmId).map((terminal) => option(terminal.id, `${terminal.name} · ${firmName(terminal.firmId)}`, terminal.id === defaults.terminalId)).join("");
+  return `
+    <section class="panel invoice-panel section-band">
+      <div class="split">
+        <h2>B2C.1 Новий чек магазину</h2>
+        <span class="pill ${canSellWeapon ? "good" : "danger"}">${canSellWeapon ? "роль дозволяє продаж" : "роль блокує зброю"}</span>
+      </div>
+      <form class="stack" data-action="create-invoice">
+        <div class="document-header-grid">
+          <label class="field"><span>Тип документа</span><select name="documentType">${variantOptions("documentTypes", defaults.documentType)}</select></label>
+          <label class="field"><span>Дата</span><input name="date" type="date" value="${escapeHtml(defaults.date)}"></label>
+          <label class="field"><span>Склад</span><select name="warehouseId" data-sale-stock-context data-field-lock="warehouse">${state.warehouses.map((warehouse) => option(warehouse.id, warehouse.name, warehouse.id === defaults.warehouseId)).join("")}</select></label>
+          <label class="field"><span>Фірма</span><select name="firmId" data-sale-stock-context data-field-lock="accounting">${state.settings.firms.map((firm) => option(firm.id, firm.name, firm.id === defaults.firmId)).join("")}</select></label>
+          <label class="field"><span>Канал</span><select name="channel">${variantOptions("salesChannels", defaults.channel)}</select></label>
+          <label class="field"><span>Клієнт</span><select name="clientId" data-sale-client>${state.clients.map((client) => option(client.id, client.name, client.id === defaults.clientId)).join("")}</select></label>
+          <label class="field"><span>Прайс</span><select name="priceType" data-sale-price-type data-field-lock="price">${priceTypeOptions(defaults.priceType)}</select></label>
+        </div>
+
+        <div class="table-wrap invoice-lines">
+          <table>
+            <thead><tr><th>QR / штрихкод</th><th>Товар</th><th>К-сть</th><th>Ціна</th><th>Валюта</th><th>Знижка %</th><th>Серійні номери</th><th>Дозвіл</th><th>Дії</th></tr></thead>
+            <tbody>${lines.map((line, index) => renderSaleInvoiceLine(line, index, defaults.priceType, { warehouseId: defaults.warehouseId, firmId: defaults.firmId, clientId: "" })).join("")}</tbody>
+          </table>
+        </div>
+
+        <div class="inline-actions no-print">
+          <button class="secondary" type="button" data-add-sale-line>Додати ще товар</button>
+          <span class="pill info">сума чека ${formatMoney(totals.total, totals.currency)}</span>
+        </div>
+
+        <div class="document-footer-grid">
+          <label class="field"><span>Оплата</span><select name="paymentMode">${variantOptions("paymentModes", defaults.paymentMode)}</select></label>
+          <label class="field"><span>Джерело</span><select name="paymentSource" data-field-lock="payment">${variantOptions("paymentSources", defaults.paymentSource)}</select></label>
+          <label class="field wide"><span>POS-термінал</span><select name="terminalId" data-field-lock="payment"><option value="">Без термінала</option>${terminalOptions}</select></label>
+          <label class="field"><span>ПРРО</span><select name="prro" data-field-lock="payment">${option("true", "Проводити ПРРО", defaults.prro !== "false")}${option("false", "Без ПРРО", defaults.prro === "false")}</select></label>
+          <label class="field"><span>Оплачено</span><input name="paid" inputmode="decimal" data-field-lock="payment" value="${escapeHtml(paidValue)}"></label>
+          <label class="field"><span>Стаття коштів</span><select name="cashArticle">${variantOptions("cashArticles", saleDraft.cashArticle || "Продаж товарів")}</select></label>
+          <label class="field"><span>Відповідальний</span><select name="manager">${employeeOptions(defaults.manager)}</select></label>
+          <label class="field"><span>Бухоблік</span><select name="accounting">${option("true", "Позначити для BAS/BAF", saleDraft.accounting === "true")}${option("false", "Не передавати", saleDraft.accounting !== "true")}</select></label>
+          <label class="field wide"><span>Референс оплати</span><input name="paymentRef" data-field-lock="payment" value="${escapeHtml(saleDraft.paymentRef || "")}" placeholder="номер чека / RRN / касова зміна"></label>
+          <label class="field wide"><span>Коментар</span><textarea name="comment" placeholder="примітка до B2C продажу">${escapeHtml(defaults.comment)}</textarea></label>
+        </div>
+
+        <button class="primary" type="submit">Створити чек</button>
+      </form>
+      <p class="notice warn small">Створення чека формує чернетку. Кнопка “Провести” у журналі списує залишок, фіксує серії та створює оплату з касою/POS/ПРРО.</p>
+    </section>
+  `;
+}
+
+function renderRetailStoreBlock() {
+  const period = periodFilter("retailStore");
+  const invoices = retailStoreInvoices(period);
+  const draftInvoices = invoices.filter((invoice) => invoice.posted === false && invoice.status === "draft");
+  const postedInvoices = invoices.filter((invoice) => !(invoice.posted === false && invoice.status === "draft"));
+  const payments = retailStorePayments(invoices);
+  const stockRows = retailStoreStockRows();
+  const openShift = state.cashShifts.find((shift) => !shift.closed);
+  const revenue = postedInvoices.filter((invoice) => invoice.status !== "cancelled").reduce((sum, invoice) => sum + uah(invoice.total, invoice.currency), 0);
+  const paid = payments.reduce((sum, payment) => sum + uah(payment.amount, payment.currency), 0);
+  const lowStock = stockRows.filter((row) => Number(row.qty || 0) <= Number(row.product?.minStock || 0)).length;
+  return `
+    <section class="panel section-band">
+      <div class="split">
+        <h2>B2C магазин</h2>
+        <span class="pill ${openShift ? "warn" : "good"}">${openShift ? `відкрита зміна ${escapeHtml(openShift.id)}` : "зміни закриті"}</span>
+      </div>
+      <section class="grid four">
+        <article class="card metric good"><span>Виторг</span><strong>${formatMoney(revenue)}</strong><small>${postedInvoices.length} проведених чеків за період.</small></article>
+        <article class="card metric info"><span>Оплати</span><strong>${formatMoney(paid)}</strong><small>Каса, картка або банк по B2C чеках магазину.</small></article>
+        <article class="card metric warn"><span>Чернетки</span><strong>${draftInvoices.length}</strong><small>Очікують проведення і списання складу.</small></article>
+        <article class="card metric ${lowStock ? "danger" : "good"}"><span>Мін. залишок</span><strong>${lowStock}</strong><small>Позиції магазину на межі поповнення.</small></article>
+      </section>
     </section>
 
-    <section class="grid two">
-      <div class="panel">
+    ${renderRetailSaleForm()}
+
+    <section class="panel section-band" data-print-area="retailStoreDocs" data-print-title="B2C магазин · чеки">
+      <div class="split">
+        <h2>B2C.2 Чеки магазину</h2>
+        <span class="pill info">${invoices.length} документів</span>
+      </div>
+      ${renderPeriodPrintControls("retailStore", "B2C магазин", period, invoices.length)}
+      ${invoiceTable(invoices, { emptyText: "B2C чеків магазину за вибраний період немає." })}
+    </section>
+
+    <section class="grid two section-band">
+      <article class="panel">
         <div class="split">
-          <h2>Контроль операцій</h2>
-          <span class="pill info">Закритий день: ${state.settings.closedDay}</span>
+          <h2>B2C.3 Залишки магазину</h2>
+          <span class="pill info">${warehouseName(retailStoreWarehouseId())}</span>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Документ</th><th>Дата</th><th>Клієнт</th><th>Канал</th><th>Сума</th><th>Стан</th></tr></thead>
+            <thead><tr><th>Товар</th><th>Фірма</th><th>Залишок</th><th>Мінімум</th><th>Вартість</th><th>Стан</th></tr></thead>
             <tbody>
-              ${state.invoices.map((invoice) => `
+              ${stockRows.map((row) => {
+                const minStock = Number(row.product?.minStock || 0);
+                return `
+                  <tr>
+                    <td>${escapeHtml(productName(row.product?.id || row.productId))}<br><span class="small muted">${escapeHtml(productCodes(row.product))}</span></td>
+                    <td>${firmName(row.firmId || "vat")}</td>
+                    <td><strong>${row.qty}</strong></td>
+                    <td>${minStock || "-"}</td>
+                    <td>${formatMoney(row.valueUAH)}</td>
+                    <td>${Number(row.qty || 0) <= minStock ? '<span class="pill danger">поповнити</span>' : '<span class="pill good">доступно</span>'}</td>
+                  </tr>
+                `;
+              }).join("") || '<tr><td colspan="6" class="muted">На складі магазину немає залишків.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="split">
+          <h2>B2C.4 Каса та POS</h2>
+          <span class="pill ${openShift ? "warn" : "good"}">${openShift ? "зміна відкрита" : "готово до нової зміни"}</span>
+        </div>
+        <div class="chips">
+          ${paymentTerminalsForFirm().map((terminal) => `<span class="pill info">${escapeHtml(terminal.name)} · ${escapeHtml(firmName(terminal.firmId))}</span>`).join("") || '<span class="pill warn">термінали не налаштовані</span>'}
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Дата</th><th>Менеджер</th><th>Очікувано</th><th>Факт</th><th>Різниця</th><th>Стан</th></tr></thead>
+            <tbody>
+              ${state.cashShifts.map((shift) => `
                 <tr>
-                  <td><strong>${invoice.id}</strong><br><span class="small muted">${firmName(invoice.firmId)}</span></td>
-                  <td>${invoice.date}</td>
-                  <td>${clientName(invoice.clientId)}</td>
-                  <td>${invoice.channel}</td>
-                  <td>${formatMoney(invoice.total, invoice.currency)}<br><span class="small muted">борг ${formatMoney(invoice.total - invoice.paid, invoice.currency)}</span></td>
-                  <td>${statusPill(invoice.status)} ${isLocked(invoice.date, invoice.locked) ? '<span class="pill danger">заблоковано</span>' : ""}</td>
+                  <td>${shift.date}</td>
+                  <td>${escapeHtml(shift.manager || "-")}</td>
+                  <td>${formatMoney(shift.expected)}</td>
+                  <td>${formatMoney(shift.actual)}</td>
+                  <td>${formatMoney(Number(shift.actual || 0) - Number(shift.expected || 0))}</td>
+                  <td>${shift.closed ? '<span class="pill good">закрито</span>' : '<span class="pill warn">відкрита</span>'}</td>
+                </tr>
+              `).join("") || '<tr><td colspan="6" class="muted">Касових змін ще немає.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderB2CStore() {
+  return renderRetailStoreBlock();
+}
+
+function renderMarketplaceSales() {
+  return `
+    <section class="grid three section-band">
+      <article class="card metric danger"><span>Нові замовлення</span><strong>${state.marketplaceOrders.filter((order) => order.status === "new_order").length}</strong><small>Очікують дії менеджера.</small></article>
+      <article class="card metric warn"><span>У русі</span><strong>${state.marketplaceOrders.filter((order) => ["in_progress", "waiting_client", "confirmed_by_client", "upsell", "waiting_payment", "picking", "picked", "shipped"].includes(order.status)).length}</strong><small>Обробка, оплата, склад або доставка.</small></article>
+      <article class="card metric good"><span>Оплати</span><strong>${state.marketplaceOrders.filter((order) => order.payment?.status === "paid").length}</strong><small>Підтверджені по замовленнях.</small></article>
+    </section>
+
+    ${renderManagerSalesFunnel()}
+    ${renderMarketplaceOrderProcessControl()}
+
+    <section class="panel section-band">
+      <div class="split">
+        <h2>2.1 Замовлення</h2>
+        <button class="primary no-print" type="button" data-open-create-marketplace-order>Створити замовлення</button>
+      </div>
+      <div class="dashboard-list">
+        ${state.marketplaceOrders.map((order) => {
+          const buyer = marketplaceOrderBuyer(order);
+          const issues = marketplaceOrderMissingFields(order);
+          return `
+            <article class="dashboard-row clickable-row ${issues.length ? "row-has-issues" : ""}" data-edit-marketplace-order="${escapeHtml(order.id)}" title="Клікніть, щоб змінити замовлення">
+              <div class="row-main">
+                <span class="row-title">${order.marketplace} · ${order.externalOrderId}</span>
+                <strong>${formatMoney(marketplaceOrderTotal(order), order.currency)}</strong>
+              </div>
+              <div class="row-main muted small">
+                <span>${order.date} · ${escapeHtml(order.sku)} · ${escapeHtml(marketplaceOrderProductsSummary(order))}</span>
+                <span>${escapeHtml(buyer.name)} · ${escapeHtml(buyer.phone || "-")}</span>
+              </div>
+              <div class="row-meta">
+                ${marketplaceOrderStatusPill(order.status)}
+                ${marketplacePaymentStatusPill(order.payment?.status)}
+                ${renderOrderIssueCompact(order)}
+              </div>
+              <div class="workflow-actions no-print">
+                ${renderOrderCommunicationButtons(order)}
+              </div>
+            </article>
+          `;
+        }).join("") || '<p class="muted">Поки немає замовлень маркетплейсів.</p>'}
+        </div>
+    </section>
+
+    ${renderWarehouseDeliveryControl()}
+    ${renderRozetkaImportedOrdersPanel()}
+
+    <section class="panel section-band">
+      <h2>2.3 Логістика з рухом замовлень</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Замовлення</th><th>Служба</th><th>Адреса</th><th>ТТН</th><th>Склад / логістика</th><th>Рух</th><th>API доставки</th><th>Зв'язок</th><th>Дії</th></tr></thead>
+          <tbody>
+            ${state.marketplaceOrders.map((order) => {
+              const provider = deliveryProviderForOrder(order);
+              return `
+              <tr class="clickable-row" data-edit-marketplace-order="${escapeHtml(order.id)}" title="Клікніть, щоб змінити замовлення">
+                <td><strong>${escapeHtml(order.externalOrderId)}</strong><br><span class="small muted">${escapeHtml(order.marketplace)}</span></td>
+                <td>${escapeHtml(order.delivery?.service || "-")}</td>
+                <td>${escapeHtml(order.delivery?.city || "-")} · ${escapeHtml(order.delivery?.warehouse || "-")}</td>
+                <td>${escapeHtml(order.delivery?.ttn || "не внесено")}</td>
+                <td>${renderWarehouseFlowSummary(order)}</td>
+                <td>${marketplaceDeliveryStatusPill(order.delivery?.status || "new")}</td>
+                <td>${escapeHtml(order.delivery?.apiStatus || "API не перевірявся")}</td>
+                <td class="row-actions no-print">${renderOrderCommunicationButtons(order)}</td>
+                <td class="row-actions no-print">${renderMarketplaceOrderControlActions(order)}</td>
+              </tr>
+              <tr>
+                <td colspan="9" class="small muted">
+                  ${deliveryApiProviderPill(provider)}
+                  ${order.delivery?.lastCheck ? ` · перевірка ${escapeHtml(order.delivery.lastCheck)}` : ""}
+                </td>
+              </tr>`;
+            }).join("") || '<tr><td colspan="9" class="muted">Немає логістичних рухів.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    ${renderSalesClientsPanel()}
+
+    ${renderOrderCommunicationHub()}
+  `;
+}
+
+function marketplaceOrderCreateForm() {
+  const product = state.products[0] || {};
+  const price = product.id ? productSalePrice(product, marketplacePriceTypeId()) : { amount: 0, currency: "UAH" };
+  return `
+    <form class="form-grid" data-action="create-marketplace-order">
+      <label class="field"><span>Дата замовлення</span><input name="date" type="date" value="${today}"></label>
+      <label class="field"><span>Маркетплейс</span><select name="marketplace">${marketplaceNames().map((name) => option(name, name, false)).join("")}</select></label>
+      <label class="field"><span>ID замовлення</span><input name="externalOrderId" placeholder="заповниться автоматично"></label>
+      <label class="field"><span>Статус</span><select name="status">${marketplaceOrderStatusOptions("new_order")}</select></label>
+      <label class="field"><span>Менеджер</span><select name="manager">${employeeOptions(state.currentManager)}</select></label>
+      <div class="full" hidden data-marketplace-order-primary-legacy>
+        <label class="field wide"><span>Товар</span><select name="productId" data-linked-parent="product">${state.products.map((item) => option(item.id, `${item.brand} ${item.model}`, item.id === product.id)).join("")}</select></label>
+        ${linkedRequisiteInput({ parentType: "product", parentField: "productId", fieldKey: "skus", name: "sku", label: "SKU", value: productPrimarySku(product), placeholder: "SKU маркетплейсу" })}
+        <label class="field"><span>Кількість</span><input name="qty" type="number" min="1" value="1"></label>
+        <label class="field"><span>Ціна</span><input name="price" inputmode="decimal" value="${escapeHtml(price.amount || product.price || 0)}"></label>
+        <label class="field"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === (price.currency || product.currency || "UAH"))).join("")}</select></label>
+      </div>
+      ${renderMarketplaceOrderLinesForm({ productId: product.id, sku: productPrimarySku(product), qty: 1, price: price.amount || product.price || 0, currency: price.currency || product.currency || "UAH" })}
+      <label class="field wide"><span>Покупець CRM</span><select name="buyerClientId" data-linked-parent="client" data-linked-name-target="buyerName">${linkedParentOptions("client", "", "Новий покупець / не обрано")}</select></label>
+      <label class="field"><span>Покупець</span><input name="buyerName" required placeholder="ПІБ покупця"></label>
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "phones", name: "buyerPhone", label: "Телефон", required: true, placeholder: "+380... або додайте до покупця CRM" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "emails", name: "buyerEmail", label: "Email", placeholder: "email покупця" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "edrpous", name: "buyerEdrpou", label: "ЄДРПОУ / ІПН", placeholder: "за наявності" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "addresses", name: "buyerAddress", label: "Адреса покупця", full: true, placeholder: "адреса або коментар до доставки" })}
+      <label class="field"><span>Служба доставки</span><select name="deliveryService">${variantOptions("delivery", "Нова пошта")}</select></label>
+      <label class="field"><span>Місто</span><input name="deliveryCity" placeholder="місто"></label>
+      <label class="field"><span>Відділення</span><input name="deliveryWarehouse" placeholder="відділення / поштомат"></label>
+      <label class="field"><span>ТТН</span><input name="deliveryTtn" placeholder="можна додати пізніше"></label>
+      <label class="field"><span>Статус доставки</span><select name="deliveryStatus">${deliveryStatusOptions("new")}</select></label>
+      <label class="field"><span>Статус оплати</span><select name="paymentStatus">${["expected", "pending", "paid", "failed"].map((status) => option(status, marketplacePaymentStatusPill(status).replace(/<[^>]+>/g, ""), status === "expected")).join("")}</select></label>
+      <label class="field"><span>Сума оплати</span><input name="paymentAmount" inputmode="decimal" placeholder="якщо відрізняється від суми замовлення"></label>
+      <label class="field"><span>Метод оплати</span><input name="paymentMethod" value="Маркетплейс"></label>
+      <label class="field"><span>Джерело оплати</span><input name="paymentSource" value="Ручне замовлення CRM"></label>
+      <p class="notice small full">Після створення CRM автоматично створить/оновить клієнта, призначить менеджера і поставить замовлення у воронку контролю часу.</p>
+      <button class="primary" type="submit">Створити замовлення</button>
+    </form>
+  `;
+}
+
+function openCreateMarketplaceOrderForm() {
+  if (!state.products.length) return alert("Спочатку створіть товар у каталозі.");
+  openModal("Створити замовлення вручну", marketplaceOrderCreateForm());
+}
+
+function orderCommunicationReceiverMap(order) {
+  return {
+    phone: communicationReceiver(order, "phone"),
+    ip_telephony: communicationReceiver(order, "phone"),
+    viber: communicationReceiver(order, "viber"),
+    sms: communicationReceiver(order, "sms"),
+    email: communicationReceiver(order, "email"),
+    whatsapp: communicationReceiver(order, "whatsapp"),
+    telegram: communicationReceiver(order, "telegram")
+  };
+}
+
+function syncCommunicationReceiver(form) {
+  const order = byId(state.marketplaceOrders, form?.elements.orderId?.value);
+  if (!order || !form?.elements.receiver) return;
+  const channel = form.elements.channel?.value || "";
+  form.elements.receiver.value = orderCommunicationReceiverMap(order)[channel] || "";
+}
+
+function openOrderCallbackForm(id) {
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!canContactMarketplaceBuyer()) return alert("Поточна роль не має права комунікувати з покупцем.");
+  const buyer = marketplaceOrderBuyer(order);
+  const receiver = communicationReceiver(order, "phone");
+  openModal(`Передзвонити · ${order.externalOrderId}`, `
+    <form class="form-grid" data-action="order-callback" data-order-communication-form>
+      <input type="hidden" name="orderId" value="${escapeHtml(order.id)}">
+      <label class="field"><span>Комунікатор</span><select name="channel" data-communication-channel>${communicatorOptions(order, "call", "phone")}</select></label>
+      <label class="field"><span>Кому дзвонити</span><input name="receiver" value="${escapeHtml(receiver)}" required></label>
+      <label class="field"><span>Запис розмови</span><select name="recordCall">${option("false", "не записувати", true)}${option("true", "почати запис", false)}</select></label>
+      <label class="field"><span>Відкрити додаток</span><select name="openExternal">${option("true", "так", true)}${option("false", "тільки записати в CRM", false)}</select></label>
+      <label class="field full"><span>Коментар менеджера</span><textarea name="note" placeholder="тема дзвінка, домовленість, причина повторного контакту">Передзвонити покупцю ${escapeHtml(buyer.name || "")} по замовленню ${escapeHtml(order.externalOrderId)}.</textarea></label>
+      <button class="primary" type="submit">Передзвонити</button>
+    </form>
+  `);
+}
+
+function openOrderMessageForm(id) {
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!canContactMarketplaceBuyer()) return alert("Поточна роль не має права комунікувати з покупцем.");
+  const receiver = communicationReceiver(order, "viber") || communicationReceiver(order, "sms") || communicationReceiver(order, "email");
+  openModal(`Написати покупцю · ${order.externalOrderId}`, `
+    <form class="form-grid" data-action="order-message" data-order-communication-form>
+      <input type="hidden" name="orderId" value="${escapeHtml(order.id)}">
+      <label class="field"><span>Комунікатор</span><select name="channel" data-communication-channel>${communicatorOptions(order, "message", "viber")}</select></label>
+      <label class="field"><span>Одержувач</span><input name="receiver" value="${escapeHtml(receiver)}" required></label>
+      <label class="field"><span>Відкрити додаток</span><select name="openExternal">${option("false", "тільки записати в CRM", true)}${option("true", "відкрити додаток", false)}</select></label>
+      <label class="field full"><span>Повідомлення</span><textarea name="message" required>${escapeHtml(orderDefaultMessage(order))}</textarea></label>
+      <button class="primary" type="submit">Написати повідомлення</button>
+    </form>
+  `);
+}
+
+function defaultMarketplaceReplyText(item) {
+  const preferred = (state.marketplaceMessageTemplates || []).find((template) => {
+    if (item.sourceType === "return_request") return template.name.toLowerCase().includes("повер");
+    if (item.sourceType === "seller_question") return template.name.toLowerCase().includes("товар");
+    return template.name.toLowerCase().includes("замов");
+  }) || (state.marketplaceMessageTemplates || [])[0];
+  return fillMarketplaceReplyTemplate(preferred?.text || "", item);
+}
+
+function openMarketplaceQuestionReply(id) {
+  const question = byId(state.marketplaceCustomerQuestions || [], id);
+  if (!question) return;
+  if (!canContactMarketplaceBuyer() || !canCreateDocument("marketplaceCustomerQuestions")) return alert("Поточна роль не має права відповідати на питання маркетплейсу.");
+  openModal(`Відповідь через ${question.marketplace} · ${marketplaceCustomerQuestionTypeLabel(question.sourceType)}`, `
+    <form class="form-grid" data-action="reply-marketplace-question">
+      <input type="hidden" name="questionId" value="${escapeHtml(question.id)}">
+      <div class="notice small full">
+        <strong>${escapeHtml(question.subject || "Питання")}</strong><br>
+        ${escapeHtml(question.message || "")}<br>
+        <span class="muted">${escapeHtml(question.externalOrderId || "без замовлення")} · ${escapeHtml(question.buyerName || "покупець")}</span>
+      </div>
+      <label class="field"><span>Шаблон</span><select name="templateId">${option("", "без шаблону", true)}${marketplaceQuestionTemplateOptions()}</select></label>
+      <label class="field"><span>Дія API</span><select name="sendApi">${option("false", "записати в CRM", true)}${option("true", "відправити через Rozetka API /messages/create")}</select></label>
+      <label class="field"><span>Email покупцю</span><select name="sendEmailUser">${option("0", "ні", true)}${option("1", "так")}</select></label>
+      <label class="field"><span>Статус після відповіді</span><select name="status">${option("answered", "відповіли", true)}${option("waiting_customer", "очікує клієнта")}${option("waiting_marketplace", "очікує маркетплейс")}${option("archived", "архів")}</select></label>
+      <label class="field full"><span>Відповідь менеджера</span><textarea name="answer" required>${escapeHtml(question.answer || defaultMarketplaceReplyText(question))}</textarea></label>
+      <button class="primary" type="submit">Зберегти / відправити через маркетплейс</button>
+    </form>
+  `);
+}
+
+function openMarketplaceThreadReply(id) {
+  const thread = byId(state.marketplaceServiceThreads || [], id);
+  if (!thread) return;
+  if (!canContactMarketplaceBuyer() || !canCreateDocument("marketplaceServiceThreads")) return alert("Поточна роль не має права відповідати маркетплейсу.");
+  openModal(`Переписка з ${thread.marketplace}`, `
+    <form class="form-grid" data-action="reply-marketplace-thread">
+      <input type="hidden" name="threadId" value="${escapeHtml(thread.id)}">
+      <div class="notice small full">
+        <strong>${escapeHtml(thread.subject || "Звернення")}</strong><br>
+        ${escapeHtml(thread.message || "")}<br>
+        <span class="muted">${escapeHtml(thread.externalId || thread.requestId || "")}</span>
+      </div>
+      <label class="field"><span>Статус після відповіді</span><select name="status">${option("waiting_marketplace", "очікує маркетплейс", true)}${option("answered", "відповіли")}${option("closed", "закрито")}</select></label>
+      <label class="field full"><span>Коментар / відповідь менеджера</span><textarea name="answer" required>${escapeHtml(thread.answer || "")}</textarea></label>
+      <button class="primary" type="submit">Зберегти відповідь</button>
+    </form>
+  `);
+}
+
+function renderWarehouseFlowSummary(order) {
+  const flow = order.warehouseFlow || {};
+  const items = [
+    ["Склад отримав", flow.warehouseSentAt, flow.warehouseSentBy],
+    ["Відбірка ОК", flow.pickingConfirmedAt, flow.pickingConfirmedBy],
+    ["Передано логісту", flow.deliveryHandoverAt, flow.deliveryHandoverBy],
+    ["Логіст прийняв", flow.logisticsAcceptedAt, flow.logisticsAcceptedBy]
+  ];
+  return `
+    <div class="small muted">
+      ${items.map(([label, at, by]) => `<div><strong>${escapeHtml(label)}:</strong> ${escapeHtml(at || "очікує")}${by ? ` · ${escapeHtml(by)}` : ""}</div>`).join("")}
+    </div>
+  `;
+}
+
+function renderDeliveryApiSettingsSummary() {
+  const settings = deliveryApiSettings();
+  return Object.values(settings).map((provider) => deliveryApiProviderPill(provider)).join("");
+}
+
+function renderWarehouseDeliveryOrderRows(orders) {
+  if (!orders.length) return '<p class="muted small">Немає замовлень у цьому стані.</p>';
+  return orders.map((order) => {
+    const buyer = marketplaceOrderBuyer(order);
+    const issues = marketplaceOrderMissingFields(order);
+    return `
+      <article class="dashboard-row compact clickable-row ${issues.length ? "row-has-issues" : ""}" data-edit-marketplace-order="${escapeHtml(order.id)}">
+        <div>
+          <strong>${escapeHtml(order.externalOrderId || order.id)}</strong>
+          <p class="small muted">${escapeHtml(order.marketplace || "")} · ${escapeHtml(buyer.name || "покупець")} · ${formatMoney(marketplaceOrderTotal(order), order.currency)}</p>
+          ${renderWarehouseFlowSummary(order)}
+        </div>
+        <div>
+          ${marketplaceOrderStatusPill(order.status)}
+          ${marketplaceDeliveryStatusPill(order.delivery?.status || "new")}
+          <p class="small muted">${escapeHtml(order.delivery?.service || "служба не вказана")} · ${escapeHtml(order.delivery?.ttn || "ТТН не внесено")}</p>
+          ${renderOrderIssueCompact(order)}
+        </div>
+        ${renderMarketplaceOrderControlActions(order)}
+      </article>
+    `;
+  }).join("");
+}
+
+function renderWarehouseDeliveryControl() {
+  const orders = state.marketplaceOrders || [];
+  const picking = orders.filter((order) => normalizeMarketplaceOrderStatus(order.status) === "picking");
+  const handover = orders.filter((order) => normalizeMarketplaceOrderStatus(order.status) === "picked" && !["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(order.delivery?.status || ""));
+  const logistics = orders.filter((order) => normalizeMarketplaceOrderStatus(order.status) === "picked" && (order.delivery?.status || "") === "warehouse_handover");
+  const tracking = orders.filter((order) => ["shipped", "delivered"].includes(normalizeMarketplaceOrderStatus(order.status)) || ["logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivery_problem"].includes(order.delivery?.status || ""));
+  return `
+    <section class="panel section-band" data-print-area="warehouseDelivery" data-print-title="Склад і відбірка замовлень">
+      <div class="split">
+        <div>
+          <h2>2.2 Склад і відбірка замовлень</h2>
+          <p class="muted small">Операційний контроль відбірки, передачі логісту, підтвердження логіста і відстеження ТТН.</p>
+        </div>
+        <div class="status-legend no-print">${renderDeliveryApiSettingsSummary()}</div>
+      </div>
+      <div class="grid two">
+        <article class="card stack">
+          <div class="split"><strong>Відбірка завскладом</strong><span class="pill info">${picking.length}</span></div>
+          ${renderWarehouseDeliveryOrderRows(picking)}
+        </article>
+        <article class="card stack">
+          <div class="split"><strong>Передати логісту</strong><span class="pill warn">${handover.length}</span></div>
+          ${renderWarehouseDeliveryOrderRows(handover)}
+        </article>
+        <article class="card stack">
+          <div class="split"><strong>Підтвердження логіста</strong><span class="pill warn">${logistics.length}</span></div>
+          ${renderWarehouseDeliveryOrderRows(logistics)}
+        </article>
+        <article class="card stack">
+          <div class="split"><strong>Трекінг доставки</strong><span class="pill info">${tracking.length}</span></div>
+          ${renderWarehouseDeliveryOrderRows(tracking)}
+        </article>
+      </div>
+    </section>
+  `;
+}
+
+function renderMarketplaceProducts() {
+  const stockRows = inventoryRows();
+  const tableFilters = productTableFilters();
+  const visibleProducts = state.products.filter((product) => productTableMatchesName(product, tableFilters.catalog));
+  const visibleStockRows = stockRows.filter((row) => productTableMatchesName(row, tableFilters.stock));
+  const visiblePublications = state.marketplacePublications.filter((publication) => productTableMatchesName(publication, tableFilters.publications));
+  return `
+    <section class="grid three section-band">
+      <article class="card metric info"><span>Товари</span><strong>${state.products.length}</strong><small>Внутрішній каталог для каналів.</small></article>
+      <article class="card metric good"><span>Залишок</span><strong>${stockRows.reduce((sum, row) => sum + Number(row.qty || 0), 0)}</strong><small>Усі доступні складські одиниці.</small></article>
+      <article class="card metric warn"><span>Публікації до синхронізації</span><strong>${state.marketplacePublications.filter((publication) => publication.status !== "published").length}</strong><small>Потрібен обмін з каналами.</small></article>
+    </section>
+
+    ${renderMarketplacePublicationControl()}
+
+    <section class="panel section-band">
+      <div class="split">
+        <h2>3.1 Каталог</h2>
+        <button class="primary no-print" type="button" data-open-create-product>Створити товар</button>
+      </div>
+      ${renderProductTableSearch("catalog", "назва, бренд, модель або код", visibleProducts.length, state.products.length)}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Товар</th><th>Категорія</th><th>Коди</th><th>Ціна</th><th>Публікації</th></tr></thead>
+          <tbody>
+            ${state.products.map((product) => `
+              <tr class="clickable-row" data-product-table-row="catalog" data-product-search-text="${escapeHtml(productTableSearchText(product))}" data-open-product="${escapeHtml(product.id)}" title="Клікніть, щоб змінити товар" ${productTableMatchesName(product, tableFilters.catalog) ? "" : 'style="display: none;"'}>
+                <td><strong>${escapeHtml(productLabel(product))}</strong><br><span class="small muted">${product.type === "weapon" ? "серійний товар" : "кількісний товар"}</span></td>
+                <td>${escapeHtml(product.category || "-")}</td>
+                <td>${productCodes(product)}</td>
+                <td>${formatMoney(product.price, product.currency)}</td>
+                <td>${state.marketplacePublications.filter((publication) => publication.productId === product.id).length}</td>
+              </tr>
+            `).join("")}
+            ${state.products.length ? "" : '<tr><td colspan="5" class="muted">Немає товарів.</td></tr>'}
+            <tr data-product-table-empty="catalog" ${visibleProducts.length || !state.products.length ? 'style="display: none;"' : ""}><td colspan="5" class="muted">За назвою нічого не знайдено.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel section-band">
+      <h2>3.2 Залишки на складі</h2>
+      ${renderProductTableSearch("stock", "назва товару або код", visibleStockRows.length, stockRows.length)}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Товар</th><th>Склад</th><th>Фірма</th><th>Кількість</th><th>Вартість</th></tr></thead>
+          <tbody>
+            ${stockRows.map((row) => `
+              <tr class="clickable-row" data-product-table-row="stock" data-product-search-text="${escapeHtml(productTableSearchText(row))}" data-open-product="${escapeHtml(row.product?.id || row.productId)}" title="Клікніть, щоб змінити товар" ${productTableMatchesName(row, tableFilters.stock) ? "" : 'style="display: none;"'}>
+                <td>${escapeHtml(productName(row.product?.id || row.productId))}</td>
+                <td>${warehouseName(row.warehouseId)}</td>
+                <td>${firmName(row.firmId || "vat")}</td>
+                <td>${row.qty}</td>
+                <td>${formatMoney(row.valueUAH)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="5" class="muted">Немає залишків.</td></tr>'}
+            <tr data-product-table-empty="stock" ${visibleStockRows.length || !stockRows.length ? 'style="display: none;"' : ""}><td colspan="5" class="muted">За назвою нічого не знайдено.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel section-band">
+      <div class="split">
+        <h2>3.3 Публікації</h2>
+        <button class="primary no-print" type="button" data-open-create-publication>Створити публікацію</button>
+      </div>
+      ${renderProductTableSearch("publications", "назва товару, назва публікації або SKU", visiblePublications.length, state.marketplacePublications.length)}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Маркетплейс</th><th>SKU / ID</th><th>Товар</th><th>Категорія / фільтри</th><th>Ціна</th><th>Залишок каналу</th><th>Статус</th><th>Готовність</th><th>Дії</th></tr></thead>
+          <tbody>
+            ${state.marketplacePublications.map((publication) => {
+              const readiness = marketplacePublicationReadiness(publication);
+              return `
+                <tr class="clickable-row ${readiness.issues.length ? "row-has-issues" : ""}" data-product-table-row="publications" data-product-search-text="${escapeHtml(productTableSearchText(publication))}" data-edit-publication="${escapeHtml(publication.id)}" title="Клікніть, щоб змінити публікацію" ${productTableMatchesName(publication, tableFilters.publications) ? "" : 'style="display: none;"'}>
+                  <td><strong>${publication.marketplace}</strong><br><span class="small muted">${publication.manager || "-"}</span></td>
+                  <td>${publication.sku}<br><span class="small muted">${publication.externalId || "-"}</span></td>
+                  <td>${escapeHtml(productName(publication.productId))}</td>
+                  <td>${publicationMarketplaceRequirementsSummary(publication)}</td>
+                  <td>${formatMoney(publication.price, publication.currency)}</td>
+                  <td>${publication.stockQty ?? "-"}</td>
+                  <td>${statusPill(publication.status)}<br><span class="small muted">фото: ${publication.photosStatus || "-"}</span></td>
+                  <td>${renderPublicationIssueCompact(publication)}</td>
+                  <td class="row-actions no-print">
+                    <button class="ghost" type="button" data-edit-publication="${escapeHtml(publication.id)}" ${canEditMarketplacePublication() ? "" : "disabled"}>Редагувати</button>
+                    <button class="secondary" type="button" data-sync-publication="${escapeHtml(publication.id)}">Синхронізувати</button>
+                  </td>
+                </tr>
+              `;
+            }).join("") || '<tr><td colspan="9" class="muted">Немає публікацій.</td></tr>'}
+            <tr data-product-table-empty="publications" ${visiblePublications.length || !state.marketplacePublications.length ? 'style="display: none;"' : ""}><td colspan="9" class="muted">За назвою нічого не знайдено.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderMarketplaceAnalytics() {
+  const rows = state.marketplaceStats.map((row) => {
+    const revenue = uah(Number(row.price || 0) * Number(row.sold || 0), row.currency);
+    const cost = Number(row.sold || 0) * uah(row.cost, row.costCurrency);
+    const expenses = Number(row.commission || 0) + Number(row.logistics || 0) + Number(row.otherCosts || 0);
+    const profit = revenue - cost - expenses;
+    const margin = revenue ? (profit / revenue) * 100 : 0;
+    return { ...row, revenue, cost, expenses, profit, margin };
+  });
+  return `
+    <section class="grid four section-band">
+      <article class="card metric good"><span>Виторг</span><strong>${formatMoney(rows.reduce((sum, row) => sum + row.revenue, 0))}</strong><small>Продажі за каналами.</small></article>
+      <article class="card metric warn"><span>Комісії та логістика</span><strong>${formatMoney(rows.reduce((sum, row) => sum + row.expenses, 0))}</strong><small>Витрати маркетплейсів.</small></article>
+      <article class="card metric info"><span>Собівартість</span><strong>${formatMoney(rows.reduce((sum, row) => sum + row.cost, 0))}</strong><small>За проданими SKU.</small></article>
+      <article class="card metric danger"><span>Прибуток</span><strong>${formatMoney(rows.reduce((sum, row) => sum + row.profit, 0))}</strong><small>Після комісій і собівартості.</small></article>
+    </section>
+
+    <section class="panel section-band">
+      <h2>4. Аналітика та звіти</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Маркетплейс</th><th>SKU</th><th>Продано</th><th>Виторг</th><th>Комісія</th><th>Логістика</th><th>Собівартість</th><th>Прибуток</th><th>Маржа</th></tr></thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr class="clickable-row" data-open-product="${escapeHtml(row.productId || "")}" title="Клікніть, щоб відкрити товар">
+                <td>${row.marketplace}</td>
+                <td>${row.sku}<br><span class="small muted">${productName(row.productId)}</span></td>
+                <td>${row.sold}</td>
+                <td>${formatMoney(row.revenue)}</td>
+                <td>${formatMoney(row.commission)}</td>
+                <td>${formatMoney(row.logistics)}</td>
+                <td>${formatMoney(row.cost)}</td>
+                <td>${formatMoney(row.profit)}</td>
+                <td>${row.margin.toFixed(1)}%</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function financePaymentLink(payment = {}) {
+  const novaPayTransaction = (state.novaPayTransactions || []).find((transaction) => (
+    transaction.id === payment.novaPayTransactionId
+    || payment.bankRef === `NovaPay ${transaction.id}`
+  ));
+  let invoice = byId(state.invoices, payment.invoiceId || "");
+  let order = byId(state.marketplaceOrders, payment.marketplaceOrderId || "")
+    || state.marketplaceOrders.find((item) => payment.externalOrderId && item.externalOrderId === payment.externalOrderId)
+    || state.marketplaceOrders.find((item) => invoice?.id && item.invoiceId === invoice.id);
+  const ttn = String(payment.ttn || novaPayTransaction?.ttn || order?.delivery?.ttn || order?.ttn || invoice?.ttn || "").trim();
+  if (!order && ttn) order = findNovaPayOrderByTtn(ttn);
+  if (!invoice && order?.invoiceId) invoice = byId(state.invoices, order.invoiceId);
+  if (!invoice && ttn) invoice = findNovaPayInvoiceByTtn(ttn);
+  return { invoice, order, ttn, novaPayTransaction };
+}
+
+function financePaymentClientText(payment = {}, link = {}) {
+  if (payment.clientId) return clientName(payment.clientId);
+  if (link.invoice?.clientId) return clientName(link.invoice.clientId);
+  if (link.order) return marketplaceOrderBuyer(link.order).name || "-";
+  if (link.novaPayTransaction?.payerName) return link.novaPayTransaction.payerName;
+  return "-";
+}
+
+function financePaymentDocumentText(link = {}) {
+  const parts = [];
+  if (link.order) parts.push(`${escapeHtml(link.order.externalOrderId || link.order.id)} · ${escapeHtml(link.order.marketplace || "")}`.trim());
+  if (link.invoice) parts.push(`${escapeHtml(link.invoice.id)} · ${escapeHtml(link.invoice.channel || "")}`.trim());
+  return parts.filter(Boolean).join("<br>") || "-";
+}
+
+function financePaymentRequisites(payment = {}, link = {}) {
+  const rows = [];
+  if (payment.invoiceId || link.invoice?.id) rows.push(`Рахунок: ${payment.invoiceId || link.invoice.id}`);
+  if (payment.marketplaceOrderId || link.order?.id) rows.push(`CRM замовлення: ${payment.marketplaceOrderId || link.order.id}`);
+  if (payment.externalOrderId || link.order?.externalOrderId) rows.push(`Зовнішнє замовлення: ${payment.externalOrderId || link.order.externalOrderId}`);
+  if (payment.clientId || link.invoice?.clientId) rows.push(`Клієнт ID: ${payment.clientId || link.invoice.clientId}`);
+  if (payment.firmId || link.invoice?.firmId) rows.push(`Фірма ID: ${payment.firmId || link.invoice.firmId}`);
+  if (payment.firmId) rows.push(`Фірма: ${firmName(payment.firmId)}`);
+  if (payment.terminalId) rows.push(`Термінал: ${terminalName(payment.terminalId)}`);
+  if (payment.paymentKind) rows.push(`Тип: ${payment.paymentKind}`);
+  if (payment.source) rows.push(`Джерело: ${paymentSourceLabel(payment.source)}`);
+  if (payment.rate) rows.push(`Курс: ${payment.rate}`);
+  rows.push(`ПРРО: ${payment.prro ? "так" : "ні"}`);
+  if (payment.bankRef) rows.push(`Референс: ${payment.bankRef}`);
+  if (payment.novaPayTransactionId || link.novaPayTransaction?.id) rows.push(`NovaPay: ${payment.novaPayTransactionId || link.novaPayTransaction.id}`);
+  if (payment.comment) rows.push(`Коментар: ${payment.comment}`);
+  return rows;
+}
+
+function novaPayTransactionRequisites(transaction = {}) {
+  return [
+    transaction.orderId ? `CRM замовлення: ${transaction.orderId}` : "",
+    transaction.invoiceId ? `Рахунок: ${transaction.invoiceId}` : "",
+    transaction.crmPaymentId ? `CRM оплата: ${transaction.crmPaymentId}` : "",
+    transaction.gatewayRef ? `Gateway ref: ${transaction.gatewayRef}` : "",
+    transaction.resultCode ? `Код: ${transaction.resultCode}` : "",
+    transaction.resultMessage ? `Результат: ${transaction.resultMessage}` : "",
+    transaction.purpose ? `Призначення: ${transaction.purpose}` : ""
+  ].filter(Boolean);
+}
+
+function financePaymentRegisterRows() {
+  const crmRows = (state.payments || []).map((payment) => {
+    const link = financePaymentLink(payment);
+    return {
+      sourceType: "CRM оплата",
+      id: payment.id,
+      date: payment.date || today,
+      amount: Number(payment.amount || 0),
+      currency: payment.currency || "UAH",
+      status: payment.status || "paid",
+      method: payment.method || paymentSourceLabel(payment.source),
+      client: financePaymentClientText(payment, link),
+      document: financePaymentDocumentText(link),
+      ttn: link.ttn,
+      requisites: financePaymentRequisites(payment, link),
+      reconciliation: link.novaPayTransaction ? novaPayResultPill(link.novaPayTransaction) : (link.ttn ? '<span class="pill info">має ТТН</span>' : '<span class="pill warn">без ТТН</span>'),
+      orderId: link.order?.id || "",
+      invoiceId: link.invoice?.id || "",
+      editPaymentId: payment.id,
+      raw: payment
+    };
+  });
+
+  const representedNovaPayIds = new Set(crmRows.map((row) => row.raw.novaPayTransactionId).filter(Boolean));
+  const novaRows = (state.novaPayTransactions || [])
+    .filter((transaction) => !representedNovaPayIds.has(transaction.id) && !novaPayPaymentByTransaction(transaction))
+    .map((transaction) => {
+      const order = byId(state.marketplaceOrders, transaction.orderId) || findNovaPayOrderByTtn(transaction.ttn);
+      const invoice = byId(state.invoices, transaction.invoiceId) || (order?.invoiceId ? byId(state.invoices, order.invoiceId) : findNovaPayInvoiceByTtn(transaction.ttn));
+      return {
+        sourceType: "NovaPay реєстр",
+        id: transaction.id,
+        date: transaction.date || transaction.paidAt || today,
+        amount: Number(transaction.amount || 0),
+        currency: transaction.currency || "UAH",
+        status: transaction.status || transaction.reconciliationStatus || "paid",
+        method: "NovaPay",
+        client: transaction.payerName || (invoice?.clientId ? clientName(invoice.clientId) : order ? marketplaceOrderBuyer(order).name : "-"),
+        document: financePaymentDocumentText({ order, invoice }),
+        ttn: transaction.ttn || "",
+        requisites: novaPayTransactionRequisites(transaction),
+        reconciliation: novaPayResultPill(transaction),
+        orderId: order?.id || "",
+        invoiceId: invoice?.id || "",
+        editPaymentId: "",
+        raw: transaction
+      };
+    });
+
+  return [...crmRows, ...novaRows].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+}
+
+function financePaymentActionButtons(row) {
+  const actions = [];
+  if (row.editPaymentId) actions.push(`<button class="ghost" data-edit-payment="${escapeHtml(row.editPaymentId)}">Оплата</button>`);
+  if (row.orderId) actions.push(`<button class="ghost" data-edit-marketplace-order="${escapeHtml(row.orderId)}">Замовлення</button>`);
+  if (row.invoiceId) actions.push(`<button class="ghost" data-open-invoice="${escapeHtml(row.invoiceId)}">Рахунок</button>`);
+  return actions.join("") || '<span class="small muted">реєстр</span>';
+}
+
+function renderFinanceExchangeBlock() {
+  const sync = marketplaceSyncSettings();
+  const novaPay = novaPaySettings();
+  const exchange = dataExchangeState();
+  const connection = exchange.oneCConnection || {};
+  const rozetkaProgress = rozetkaProgressState();
+  const paymentRows = financePaymentRegisterRows();
+  const ttnRows = paymentRows.filter((row) => row.ttn).length;
+  return `
+    <section class="panel section-band">
+      <div class="split">
+        <h2>5.0 Блок обміну оплатами</h2>
+        <span class="pill ${sync.lastStatus === "error" ? "danger" : marketplaceAutoSyncEnabled ? "good" : "info"}">${marketplaceAutoSyncEnabled ? "авто 10 хв" : "вручну"}</span>
+      </div>
+      <section class="grid four">
+        <article class="card metric info"><span>CRM оплати</span><strong>${state.payments.length}</strong><small>Каса, банк, картка, NovaPay.</small></article>
+        <article class="card metric ${ttnRows ? "good" : "warn"}"><span>З ТТН</span><strong>${ttnRows}</strong><small>Є прив’язка до доставки.</small></article>
+        <article class="card metric ${novaPay.status === "error" ? "danger" : "info"}"><span>NovaPay</span><strong>${(state.novaPayTransactions || []).length}</strong><small>${escapeHtml(novaPay.lastErrorCode || novaPay.status || "очікує")}</small></article>
+        <article class="card metric ${connection.lastStatus === "error" ? "danger" : "info"}"><span>1C/BAS</span><strong>${oneCPaymentRows().length}</strong><small>${escapeHtml(connection.lastStatus || "draft")}</small></article>
+      </section>
+      <div class="exchange-summary no-print">
+        <div>
+          <strong>Rozetka + NovaPay</strong>
+          <span>${escapeHtml(marketplaceAutoSyncStatusText())}</span>
+          <small>Rozetka: ${escapeHtml(rozetkaProgress.stage || "очікує")} · NovaPay: ${escapeHtml(novaPay.lastMessage || "ще не імпортувався")}</small>
+        </div>
+        <div class="inline-actions">
+          <button class="primary" type="button" data-open-data-exchange-center>Перейти до обміну</button>
+        </div>
+      </div>
+      <p class="small muted">Запуск оновлень перенесено в Налаштування → Обмін даними → 6.1 Центр оновлень. Тут лишається фінансовий результат: оплати, ТТН, реквізити і звірка.</p>
+    </section>
+  `;
+}
+
+function renderFinancePaymentsRegister() {
+  const rows = financePaymentRegisterRows();
+  const totalUah = rows.reduce((sum, row) => sum + uah(row.amount, row.currency), 0);
+  return `
+    <section class="panel section-band">
+      <div class="split">
+        <h2>5.1 Усі оплати: CRM, банк, NovaPay</h2>
+        <span class="pill info">${rows.length} · ${formatMoney(totalUah)}</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Дата</th><th>Джерело</th><th>ID / реф.</th><th>Клієнт / платник</th><th>Документ</th><th>ТТН</th><th>Сума</th><th>Метод / статус</th><th>Реквізити</th><th>Звірка</th><th class="no-print">Дії</th></tr></thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(String(row.date || "-").slice(0, 16))}</td>
+                <td><strong>${escapeHtml(row.sourceType)}</strong></td>
+                <td>${escapeHtml(row.id || "-")}</td>
+                <td>${escapeHtml(row.client || "-")}</td>
+                <td>${row.document}</td>
+                <td>${row.ttn ? `<strong>${escapeHtml(row.ttn)}</strong>` : '<span class="muted">без ТТН</span>'}</td>
+                <td>${formatMoney(row.amount, row.currency)}</td>
+                <td>${escapeHtml(row.method || "-")}<br><span class="small muted">${escapeHtml(row.status || "-")}</span></td>
+                <td>${row.requisites.length ? row.requisites.map((item) => `<span class="small muted">${escapeHtml(item)}</span>`).join("<br>") : "-"}</td>
+                <td>${row.reconciliation}</td>
+                <td class="row-actions no-print">${financePaymentActionButtons(row)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="11" class="muted">Оплат ще немає.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderMarketplaceFinance() {
+  const canPayment = canTrackMarketplacePayment();
+  const canManualPayment = canCreateDocument("payment") && canEditField("payment");
+  const settlementRows = marketplaceNames().map((name) => {
+    const rows = state.marketplaceStats.filter((row) => row.marketplace === name);
+    const revenue = rows.reduce((sum, row) => sum + uah(Number(row.price || 0) * Number(row.sold || 0), row.currency), 0);
+    const deductions = rows.reduce((sum, row) => sum + Number(row.commission || 0) + Number(row.logistics || 0) + Number(row.otherCosts || 0), 0);
+    return { name, revenue, deductions, payout: revenue - deductions };
+  });
+  return `
+    ${renderFinanceExchangeBlock()}
+    ${renderFinancePaymentsRegister()}
+    ${renderNovaPayReconciliationPanel({ controls: false })}
+
+    <section class="panel section-band">
+      <h2>5.3 Оплати за замовлення</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Замовлення</th><th>Маркетплейс</th><th>Покупець</th><th>Метод</th><th>Сума</th><th>Статус</th><th>API</th><th>Дії</th></tr></thead>
+          <tbody>
+            ${state.marketplaceOrders.map((order) => {
+              const buyer = marketplaceOrderBuyer(order);
+              const canPayOrder = order.status !== "cancelled" && order.payment?.status !== "paid";
+              return `
+                <tr class="clickable-row" data-edit-marketplace-order="${escapeHtml(order.id)}" title="Клікніть, щоб змінити замовлення">
+                  <td><strong>${order.externalOrderId}</strong><br><span class="small muted">${order.date}</span></td>
+                  <td>${order.marketplace}</td>
+                  <td>${escapeHtml(buyer.name)}</td>
+                  <td>${escapeHtml(order.payment?.method || "-")}</td>
+                  <td>${formatMoney(order.payment?.amount || marketplaceOrderTotal(order), order.currency)}</td>
+                  <td>${marketplacePaymentStatusPill(order.payment?.status)}</td>
+                  <td>${escapeHtml(order.payment?.apiStatus || "API не перевірявся")}</td>
+                  <td class="row-actions no-print">
+                    ${renderOrderCommunicationButtons(order)}
+                    <button class="ghost" data-edit-marketplace-order="${escapeHtml(order.id)}">Відкрити</button>
+                    <button class="secondary" data-pull-marketplace-payment="${escapeHtml(order.id)}" ${canPayment && canPayOrder ? "" : "disabled"}>Оплатити</button>
+                    <button class="secondary" data-open-marketplace-payment="${escapeHtml(order.id)}" ${canManualPayment && canPayOrder ? "" : "disabled"}>Створити оплату</button>
+                  </td>
+                </tr>
+              `;
+            }).join("") || '<tr><td colspan="8" class="muted">Поки немає оплат за замовлення.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel section-band">
+      <h2>5.4 Розрахунки із маркетплейсами</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Маркетплейс</th><th>Виторг</th><th>Утримання</th><th>Очікувана виплата</th><th>Стан</th></tr></thead>
+          <tbody>
+            ${settlementRows.map((row) => `
+              <tr>
+                <td><strong>${row.name}</strong></td>
+                <td>${formatMoney(row.revenue)}</td>
+                <td>${formatMoney(row.deductions)}</td>
+                <td>${formatMoney(row.payout)}</td>
+                <td>${row.revenue ? '<span class="pill warn">звірити акт</span>' : '<span class="pill info">немає продажів</span>'}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function normalizeNovaPayTtn(ttn = "") {
+  return String(ttn || "").trim().toUpperCase().replace(/[^A-Z0-9А-ЯІЇЄҐ]/g, "");
+}
+
+function extractNovaPayTtnFromText(...parts) {
+  const text = parts
+    .map((part) => typeof part === "object" ? stableExternalStringify(part) : String(part || ""))
+    .join(" ");
+  const match = text.match(/\b(?:NP[-\s]*)?(\d{11,14})\b/i);
+  return match ? match[1] : "";
+}
+
+function novaPaySettings() {
+  state.settings.novaPay = {
+    ...clone(seedState.settings.novaPay),
+    ...(state.settings.novaPay || {})
+  };
+  return state.settings.novaPay;
+}
+
+function marketplaceSyncSettings() {
+  state.settings.marketplaceSync = {
+    ...clone(seedState.settings.marketplaceSync),
+    ...(state.settings.marketplaceSync || {}),
+    enabled: marketplaceAutoSyncEnabled
+  };
+  return state.settings.marketplaceSync;
+}
+
+function exchangeProcesses() {
+  state.settings.exchangeProcesses = {
+    ...clone(EXCHANGE_PROCESS_DEFAULTS),
+    ...(state.settings.exchangeProcesses || {})
+  };
+  Object.keys(EXCHANGE_PROCESS_DEFAULTS).forEach((key) => {
+    state.settings.exchangeProcesses[key] = {
+      ...clone(EXCHANGE_PROCESS_DEFAULTS[key]),
+      ...(state.settings.exchangeProcesses[key] || {})
+    };
+    if (key === "novaPoshta" && state.settings.exchangeProcesses[key]?.code === "NP_DELIVERY_GATEWAY_DISABLED") {
+      state.settings.exchangeProcesses[key] = clone(EXCHANGE_PROCESS_DEFAULTS[key]);
+    }
+  });
+  return state.settings.exchangeProcesses;
+}
+
+function exchangeProcess(key) {
+  return exchangeProcesses()[key] || clone(EXCHANGE_PROCESS_DEFAULTS[key] || {});
+}
+
+function exchangeStatusClass(status = "") {
+  if (status === "success" || status === "ok" || status === "imported" || status === "exported") return "good";
+  if (status === "error") return "danger";
+  if (status === "warning" || status === "pending") return "warn";
+  if (status === "running") return "warn";
+  if (status === "planned") return "muted";
+  return "info";
+}
+
+function exchangeStatusLabel(status = "", code = "") {
+  if (status === "success" || status === "ok" || status === "imported" || status === "exported") return "OK";
+  if (status === "error") return code ? `Помилка ${code}` : "Помилка";
+  if (status === "warning" || status === "pending") return code ? `Потрібна дія ${code}` : "Потрібна дія";
+  if (status === "running") return "В процесі";
+  if (status === "planned") return "Заплановано";
+  return "Очікує";
+}
+
+function setExchangeProcess(key, patch = {}) {
+  const defaults = EXCHANGE_PROCESS_DEFAULTS[key] || { label: key };
+  const processes = exchangeProcesses();
+  const next = {
+    ...clone(defaults),
+    ...(processes[key] || {}),
+    ...patch
+  };
+  next.percent = Math.max(0, Math.min(100, Number(next.percent || 0)));
+  if (patch.status || patch.percent !== undefined || patch.stage || patch.message || patch.code) {
+    next.updatedAt = patch.updatedAt || currentTimestamp();
+  }
+  processes[key] = next;
+  paintExchangeProcess(key);
+  return next;
+}
+
+function paintExchangeProcess(key, root = document) {
+  const process = exchangeProcess(key);
+  const frame = root.querySelector?.(`[data-exchange-process="${CSS.escape(key)}"]`);
+  if (!frame) return;
+  frame.dataset.processStatus = process.status || "idle";
+  const bar = frame.querySelector("[data-exchange-process-bar]");
+  if (bar) bar.style.width = `${process.percent || 0}%`;
+  const percent = frame.querySelector("[data-exchange-process-percent]");
+  if (percent) percent.textContent = `${process.percent || 0}%`;
+  const status = frame.querySelector("[data-exchange-process-status]");
+  if (status) {
+    status.className = `pill ${exchangeStatusClass(process.status)}`;
+    status.textContent = exchangeStatusLabel(process.status, process.code);
+  }
+  const stage = frame.querySelector("[data-exchange-process-stage]");
+  if (stage) stage.textContent = process.stage || "";
+  const message = frame.querySelector("[data-exchange-process-message]");
+  if (message) message.textContent = process.message || "";
+  const updated = frame.querySelector("[data-exchange-process-updated]");
+  if (updated) updated.textContent = process.updatedAt || "";
+}
+
+function canManageNovaPayApi() {
+  return canCreateDocument("novaPayApi") && canEditField("novaPay");
+}
+
+function canReconcileNovaPay() {
+  return canCreateDocument("novaPayReconciliation") && canEditField("novaPay") && canCreateDocument("payment") && canEditField("payment");
+}
+
+function novaPayErrorMessage(code) {
+  const map = {
+    [NOVAPAY_ERROR_CODES.emptyTtn]: "У платежі NovaPay немає ТТН.",
+    [NOVAPAY_ERROR_CODES.noOrderByTtn]: "У CRM не знайдено замовлення або накладну з такою ТТН.",
+    [NOVAPAY_ERROR_CODES.amountMismatch]: "Сума NovaPay не збігається із сумою замовлення.",
+    [NOVAPAY_ERROR_CODES.gatewayError]: "Серверний gateway NovaPay не відповів або повернув помилку.",
+    [NOVAPAY_ERROR_CODES.gatewayNotConfigured]: "Реальний серверний gateway NovaPay не налаштовано. Задайте NOVAPAY_GATEWAY_URL на сервері прототипу.",
+    [NOVAPAY_ERROR_CODES.directGatewayNotConfigured]: "Прямий NovaPay SOAP gateway не налаштовано. Задайте NOVAPAY_BUSINESS_LOGIN, NOVAPAY_REFRESH_TOKEN і NOVAPAY_CERTIFICATE_PATH на сервері.",
+    [NOVAPAY_ERROR_CODES.directGatewayFailed]: "Прямий NovaPay SOAP gateway повернув помилку.",
+    [NOVAPAY_ERROR_CODES.directAuthFailed]: "NovaPay не прийняв refresh token / login / certificate.",
+    [NOVAPAY_ERROR_CODES.directNoJwt]: "NovaPay не повернув JWT після авторизації.",
+    [NOVAPAY_ERROR_CODES.directNoClients]: "NovaPay не повернув жодного клієнта для цього логіна.",
+    [NOVAPAY_ERROR_CODES.directNoAccounts]: "NovaPay не повернув жодного рахунку для клієнта.",
+    [NOVAPAY_ERROR_CODES.directPaymentsFailed]: "NovaPay не повернув список платежів.",
+    [NOVAPAY_ERROR_CODES.signatureError]: "Серверний gateway повідомив про помилку підпису NovaPay.",
+    [NOVAPAY_ERROR_CODES.importParseError]: "Не вдалося розібрати JSON відповіді NovaPay."
+  };
+  return map[code] || code || "NovaPay: невідомий стан.";
+}
+
+function novaPayDemoPayerName(id, value = "") {
+  const map = {
+    "npay-demo-001": "Олександр Клименко",
+    "npay-demo-002": "Без ТТН",
+    "npay-demo-003": "Олександр Клименко"
+  };
+  const text = String(value || "").trim();
+  if (map[id] && (!text || /Р[А-Яа-яІЇЄҐ]/.test(text) || text.includes("Рџ") || text.includes("Рћ") || text.includes("Р‘"))) {
+    return map[id];
+  }
+  return text;
+}
+
+function normalizeNovaPayTransaction(raw = {}, index = 0) {
+  const row = raw || {};
+  const amount = parseDecimal(row.amount ?? row.sum ?? row.paymentAmount ?? row.paidAmount ?? 0, 0);
+  const dateSource = row.date || row.paidAt || row.createdAt || today;
+  const ttn = String(row.ttn || row.enNumber || row.expressWaybill || row.waybill || row.referenceTtn || extractNovaPayTtnFromText(row.purpose, row.comment, row.description, row.paymentPurpose, row.raw || row) || "").trim();
+  const fallbackId = `npay-${normalizeNovaPayTtn(ttn) || "row"}-${String(dateSource || today).slice(0, 10)}-${amount}-${index}`;
+  const id = String(row.id || row.transactionId || row.operationId || row.ref || row.reference || row.gatewayRef || fallbackId).trim();
+  return {
+    id,
+    ttn,
+    date: String(dateSource || today).slice(0, 10),
+    paidAt: String(row.paidAt || row.dateTime || row.createdAt || row.date || "").trim(),
+    amount,
+    currency: String(row.currency || "UAH").trim().toUpperCase() || "UAH",
+    payerName: novaPayDemoPayerName(id, row.payerName || row.payer || row.senderName || ""),
+    status: String(row.status || "paid").trim() || "paid",
+    gatewayRef: String(row.gatewayRef || row.reference || row.ref || "").trim(),
+    reconciliationStatus: row.reconciliationStatus || "new",
+    resultCode: row.resultCode || "",
+    resultMessage: row.resultMessage || "",
+    orderId: row.orderId || "",
+    invoiceId: row.invoiceId || "",
+    crmPaymentId: row.crmPaymentId || "",
+    lastCheck: row.lastCheck || "",
+    raw: row.raw || row
+  };
+}
+
+function isNovaPayTechnicalEmptyTransaction(transaction = {}) {
+  const id = String(transaction.id || "").toLowerCase();
+  const status = String(transaction.status || "").toLowerCase();
+  const payer = String(transaction.payerName || "").toLowerCase();
+  const raw = String(transaction.raw || "");
+  return !normalizeNovaPayTtn(transaction.ttn)
+    && Number(transaction.amount || 0) === 0
+    && (status === "raw" || id.includes("npay-soap-raw") || payer.includes("novapay raw response") || raw.includes("<Payments"));
+}
+
+function novaPayPayloadRows(payload) {
+  const rows = Array.isArray(payload)
+    ? payload
+    : payload?.payments
+      || payload?.transactions
+      || payload?.content?.payments
+      || payload?.content?.transactions
+      || payload?.data?.payments
+      || payload?.data?.transactions
+      || payload?.data
+      || payload?.items;
+  if (!Array.isArray(rows)) {
+    const error = new Error(novaPayErrorMessage(NOVAPAY_ERROR_CODES.importParseError));
+    error.novaPayCode = NOVAPAY_ERROR_CODES.importParseError;
+    throw error;
+  }
+  return rows;
+}
+
+function upsertNovaPayTransaction(transaction) {
+  state.novaPayTransactions = Array.isArray(state.novaPayTransactions) ? state.novaPayTransactions : [];
+  const key = transaction.id || `${normalizeNovaPayTtn(transaction.ttn)}-${transaction.date}-${transaction.amount}`;
+  const existing = state.novaPayTransactions.find((item) => (
+    item.id === transaction.id
+    || (!transaction.id && `${normalizeNovaPayTtn(item.ttn)}-${item.date}-${item.amount}` === key)
+  ));
+  if (existing) {
+    Object.assign(existing, transaction, {
+      reconciliationStatus: existing.reconciliationStatus || transaction.reconciliationStatus || "new",
+      resultCode: existing.resultCode || transaction.resultCode || "",
+      resultMessage: existing.resultMessage || transaction.resultMessage || "",
+      crmPaymentId: existing.crmPaymentId || transaction.crmPaymentId || ""
+    });
+    return existing;
+  }
+  state.novaPayTransactions.unshift(transaction);
+  return transaction;
+}
+
+function novaPayExternalKey(transaction, index) {
+  return transaction.id
+    || transaction.gatewayRef
+    || `${normalizeNovaPayTtn(transaction.ttn)}:${transaction.date || ""}:${transaction.amount || ""}:${transaction.currency || ""}`
+    || `novapay:${index}`;
+}
+
+function findNovaPayOrderByTtn(ttn) {
+  const key = normalizeNovaPayTtn(ttn);
+  if (!key) return null;
+  return state.marketplaceOrders.find((order) => normalizeNovaPayTtn(order.delivery?.ttn || order.ttn || "") === key) || null;
+}
+
+function findNovaPayInvoiceByTtn(ttn) {
+  const key = normalizeNovaPayTtn(ttn);
+  if (!key) return null;
+  return state.invoices.find((invoice) => normalizeNovaPayTtn(invoice.ttn || "") === key) || null;
+}
+
+function novaPaySameAmount(amount, currency, expectedAmount, expectedCurrency) {
+  return Math.abs(roundMoney(convertMoney(amount, currency, expectedCurrency)) - roundMoney(expectedAmount)) < 0.01;
+}
+
+function markNovaPayTransaction(transaction, status, code, message, patch = {}) {
+  Object.assign(transaction, {
+    reconciliationStatus: status,
+    resultCode: code || "",
+    resultMessage: message || "",
+    lastCheck: currentTimestamp(),
+    ...patch
+  });
+  return { status, code, message, transaction };
+}
+
+function novaPayPaymentByTransaction(transaction) {
+  return state.payments.find((payment) => (
+    payment.novaPayTransactionId === transaction.id
+    || payment.bankRef === `NovaPay ${transaction.id}`
+  ));
+}
+
+function novaPayDocumentPayment(transaction, order, invoice) {
+  return state.payments.find((payment) => {
+    if (order && payment.marketplaceOrderId === order.id) return true;
+    if (invoice && payment.invoiceId === invoice.id && novaPaySameAmount(payment.amount, payment.currency, transaction.amount, transaction.currency)) return true;
+    return false;
+  });
+}
+
+function reconcileNovaPayTransaction(transaction) {
+  if (!String(transaction.ttn || "").trim()) {
+    const code = NOVAPAY_ERROR_CODES.emptyTtn;
+    const message = "Платіж отримано з NovaPay, але NovaPay не передав ТТН. Оплату не створено автоматично; потрібна деталізація реєстру або ручна прив'язка.";
+    addAudit(`NovaPay ${transaction.id}: ${code} - ${message}`, "system");
+    return markNovaPayTransaction(transaction, "pending", code, message);
+  }
+
+  const order = findNovaPayOrderByTtn(transaction.ttn);
+  const invoice = order?.invoiceId ? byId(state.invoices, order.invoiceId) : findNovaPayInvoiceByTtn(transaction.ttn);
+  if (!order && !invoice) {
+    const code = NOVAPAY_ERROR_CODES.noOrderByTtn;
+    addAudit(`NovaPay ${transaction.id}: ${code} - ТТН ${transaction.ttn}`, "system");
+    return markNovaPayTransaction(transaction, "error", code, novaPayErrorMessage(code));
+  }
+
+  const existingByTransaction = novaPayPaymentByTransaction(transaction);
+  if (existingByTransaction) {
+    return markNovaPayTransaction(transaction, "duplicate", "", "Транзакцію NovaPay вже рознесено в CRM.", {
+      orderId: order?.id || "",
+      invoiceId: invoice?.id || "",
+      crmPaymentId: existingByTransaction.id
+    });
+  }
+
+  const expectedCurrency = order?.currency || invoice?.currency || "UAH";
+  const expectedAmount = order
+    ? Number(order.payment?.amount || marketplaceOrderTotal(order))
+    : Number(invoiceDebt(invoice) || invoice?.total || 0);
+  if (!novaPaySameAmount(transaction.amount, transaction.currency, expectedAmount, expectedCurrency)) {
+    const code = NOVAPAY_ERROR_CODES.amountMismatch;
+    const message = `${novaPayErrorMessage(code)} NovaPay ${formatMoney(transaction.amount, transaction.currency)}, CRM ${formatMoney(expectedAmount, expectedCurrency)}.`;
+    addAudit(`NovaPay ${transaction.id}: ${code} - ТТН ${transaction.ttn}`, "system");
+    return markNovaPayTransaction(transaction, "error", code, message, {
+      orderId: order?.id || "",
+      invoiceId: invoice?.id || ""
+    });
+  }
+
+  const existingByDocument = novaPayDocumentPayment(transaction, order, invoice);
+  if (existingByDocument) {
+    return markNovaPayTransaction(transaction, "duplicate", "", "У CRM вже є оплата з такою ТТН/сумою.", {
+      orderId: order?.id || "",
+      invoiceId: invoice?.id || "",
+      crmPaymentId: existingByDocument.id
+    });
+  }
+
+  const client = order ? ensureClientFromMarketplaceOrder(order) : byId(state.clients, invoice.clientId);
+  const payment = {
+    id: uniqueId("pay"),
+    invoiceId: invoice?.id || "",
+    marketplaceOrderId: order?.id || "",
+    externalOrderId: order?.externalOrderId || "",
+    marketplace: order?.marketplace || invoice?.channel || "NovaPay",
+    date: transaction.date || today,
+    amount: transaction.amount,
+    currency: transaction.currency || expectedCurrency,
+    rate: uahRate(transaction.currency || expectedCurrency),
+    rateMode: "settings",
+    method: "NovaPay",
+    source: "bank",
+    paymentKind: invoice ? "invoice" : "marketplaceOrder",
+    advance: false,
+    clientId: client?.id || invoice?.clientId || "",
+    firmId: invoice?.firmId || state.settings.firms[0]?.id || "",
+    terminalId: "",
+    prro: false,
+    bankRef: `NovaPay ${transaction.id}`,
+    novaPayTransactionId: transaction.id,
+    ttn: transaction.ttn,
+    comment: `Автоматично створено NovaPay за ТТН ${transaction.ttn}`
+  };
+  state.payments.unshift(payment);
+
+  if (invoice) {
+    const paidInInvoiceCurrency = convertMoney(transaction.amount, transaction.currency, invoice.currency);
+    invoice.paid = Math.min(Number(invoice.total || 0), Number(invoice.paid || 0) + paidInInvoiceCurrency);
+    invoice.status = Number(invoice.paid || 0) >= Number(invoice.total || 0) ? "paid" : "partial";
+  }
+
+  if (order) {
+    order.payment = {
+      ...(order.payment || {}),
+      status: "paid",
+      amount: Number(order.payment?.amount || marketplaceOrderTotal(order)),
+      source: payment.bankRef,
+      method: "NovaPay",
+      apiStatus: "NovaPay: оплачено, звірено по ТТН і сумі",
+      lastCheck: currentTimestamp(),
+      paidAt: transaction.date || today
+    };
+    if (!statusAtLeast(order.status, "paid")) setMarketplaceOrderWorkflowStage(order, "paid");
+  }
+
+  addAudit(`NovaPay ${transaction.id}: створено оплату ${payment.id} за ТТН ${transaction.ttn} на ${formatMoney(transaction.amount, transaction.currency)}`, "system");
+  return markNovaPayTransaction(transaction, "created", "", "Оплату створено в CRM автоматично.", {
+    orderId: order?.id || "",
+    invoiceId: invoice?.id || "",
+    crmPaymentId: payment.id
+  });
+}
+
+function importNovaPayPayload(payload, source = "json") {
+  const settings = novaPaySettings();
+  const rows = novaPayPayloadRows(payload)
+    .map((row, index) => normalizeNovaPayTransaction(row, index))
+    .filter((transaction) => !isNovaPayTechnicalEmptyTransaction(transaction));
+  const summary = { received: rows.length, imported: 0, created: 0, pending: 0, errors: 0, duplicates: 0, skipped: 0, codes: [] };
+  rows.forEach((row, index) => {
+    const change = externalRecordChange("novaPay", "payments", novaPayExternalKey(row, index), row);
+    const transaction = upsertNovaPayTransaction(row);
+    if (change.changed) {
+      markExternalRecordApplied(change);
+      summary.imported += 1;
+    } else {
+      summary.skipped += 1;
+    }
+    if (settings.autoCreatePayments !== false) {
+      const result = reconcileNovaPayTransaction(transaction);
+      if (result.status === "created") summary.created += 1;
+      if (result.status === "pending") summary.pending += 1;
+      if (result.status === "duplicate") summary.duplicates += 1;
+      if (result.status === "error") {
+        summary.errors += 1;
+        if (result.code) summary.codes.push(result.code);
+      }
+    }
+  });
+  settings.lastImport = currentTimestamp();
+  settings.lastCheck = currentTimestamp();
+  settings.status = summary.errors ? "error" : (summary.pending ? "warning" : "ok");
+  settings.lastErrorCode = summary.codes[0] || "";
+  settings.lastMessage = `NovaPay ${source}: отримано ${summary.received}, імпортовано ${summary.imported}, без змін ${summary.skipped}, створено оплат ${summary.created}, потребує прив'язки ${summary.pending}, дублікати ${summary.duplicates}, помилки ${summary.errors}.`;
+  addAudit(`${settings.lastMessage}${summary.codes.length ? ` Коди: ${uniqueList(summary.codes).join(", ")}` : ""}`, "system");
+  return summary;
+}
+
+function novaPaySummaryText(summary) {
+  return `NovaPay: отримано ${summary.received ?? summary.imported}, імпортовано ${summary.imported}, без змін ${summary.skipped || 0}, створено оплат ${summary.created}, потребує прив'язки ${summary.pending || 0}, дублікати ${summary.duplicates}, помилки ${summary.errors}${summary.codes.length ? ` (${uniqueList(summary.codes).join(", ")})` : ""}.`;
+}
+
+function novaPayHistorySummaryText(history) {
+  if (!history) return "";
+  const registers = history.registers || {};
+  const filesOk = registers.filesOk ?? 0;
+  const files = registers.files ?? 0;
+  const registerRows = history.registerRowsFetched ?? registers.rows ?? 0;
+  const extractRows = history.accountExtractFetched ?? history.accountExtract?.rows ?? 0;
+  return ` Історія: виписка ${history.paymentsListFetched ?? history.fetched ?? 0}, екстракт ${extractRows}, реєстр-рядки ${registerRows}, register-файли ${filesOk}/${files}, у cache ${history.cacheCount || 0}, нові ${history.added || 0}, оновлено ${history.updated || 0}.`;
+}
+
+function novaPayGatewayWarningCodes(warnings = []) {
+  return uniqueList((warnings || [])
+    .map((warning) => String(warning || "").match(/^(NPAY_[A-Z0-9_]+)/)?.[1] || "")
+    .filter(Boolean));
+}
+
+function novaPoshtaHistorySummaryText(history) {
+  if (!history) return "";
+  return ` Історія: API ${history.fetched ?? 0}, у cache ${history.cacheCount || 0}, нові ${history.added || 0}, оновлено ${history.updated || 0}.`;
+}
+
+function importNovaPayJson(form) {
+  if (!canReconcileNovaPay()) return alert("Поточна роль не має права розносити платежі NovaPay.");
+  const data = formData(form);
+  const text = String(data.novaPayPayload || "").trim();
+  if (!text) return alert(`${NOVAPAY_ERROR_CODES.importParseError}: вставте JSON відповіді NovaPay або gateway.`);
+  try {
+    const payload = JSON.parse(text);
+    const summary = importNovaPayPayload(payload, "JSON");
+    alert(novaPaySummaryText(summary));
+    render();
+  } catch (error) {
+    const code = error.novaPayCode || NOVAPAY_ERROR_CODES.importParseError;
+    const settings = novaPaySettings();
+    settings.status = "error";
+    settings.lastErrorCode = code;
+    settings.lastMessage = `${code}: ${error.message}`;
+    addAudit(`NovaPay JSON: ${code} - ${error.message}`, "system");
+    alert(`${code}: ${novaPayErrorMessage(code)}`);
+    render();
+  }
+}
+
+function appendUrlParamIfMissing(url, key, value) {
+  const pattern = new RegExp(`[?&]${key}=`, "i");
+  if (pattern.test(url)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+async function pullNovaPayPaymentsFromGateway({ silent = false } = {}) {
+  if (!canReconcileNovaPay()) {
+    const error = new Error("Поточна роль не має права розносити платежі NovaPay.");
+    error.novaPayCode = NOVAPAY_ERROR_CODES.gatewayError;
+    setExchangeProcess("novaPay", { status: "error", percent: 100, stage: "Доступ заборонено", message: error.message, code: error.novaPayCode });
+    if (!silent) {
+      alert(error.message);
+      return null;
+    }
+    throw error;
+  }
+  const settings = novaPaySettings();
+  let gatewayUrl = String(settings.gatewayUrl || "/api/novapay/payments").trim();
+  if (gatewayUrl) {
+    gatewayUrl = appendUrlParamIfMissing(gatewayUrl, "history", "all");
+    gatewayUrl = appendUrlParamIfMissing(gatewayUrl, "historyFrom", "2020-01-01");
+    gatewayUrl = appendUrlParamIfMissing(gatewayUrl, "includeExtract", "true");
+    gatewayUrl = appendUrlParamIfMissing(gatewayUrl, "includeRegisters", "true");
+    gatewayUrl = appendUrlParamIfMissing(gatewayUrl, "windowDays", "31");
+  }
+  try {
+    setExchangeProcess("novaPay", { status: "running", percent: 15, stage: "Історія NovaPay", message: gatewayUrl, code: "" });
+    const response = await fetch(gatewayUrl, { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+    const text = await response.text();
+    let payload;
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch (error) {
+      error.novaPayCode = NOVAPAY_ERROR_CODES.importParseError;
+      throw error;
+    }
+    if (!response.ok || payload?.ok === false) {
+      const error = new Error(payload.error || payload.message || `HTTP ${response.status}`);
+      error.novaPayCode = payload.errorCode || payload.code || NOVAPAY_ERROR_CODES.gatewayError;
+      throw error;
+    }
+    const summary = importNovaPayPayload(payload, "gateway");
+    if (payload.history) {
+      summary.history = payload.history;
+    }
+    const gatewayWarnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+    const gatewayWarningCodes = novaPayGatewayWarningCodes(gatewayWarnings);
+    const fatalGatewayWarningCodes = gatewayWarningCodes.filter((code) => !code.startsWith("NPAY_REGISTER_"));
+    const hasFatalGatewayWarning = payload.partial && (!gatewayWarningCodes.length || fatalGatewayWarningCodes.length);
+    if (hasFatalGatewayWarning) {
+      summary.errors += fatalGatewayWarningCodes.length || 1;
+      summary.codes.push(...(fatalGatewayWarningCodes.length ? fatalGatewayWarningCodes : [NOVAPAY_ERROR_CODES.historyPartial]));
+      summary.gatewayWarnings = gatewayWarnings;
+    } else if (gatewayWarnings.length) {
+      summary.gatewayWarnings = gatewayWarnings;
+      summary.warningCodes = gatewayWarningCodes;
+    }
+    const hasGatewayWarningOnly = !summary.errors && (summary.warningCodes || []).length;
+    setExchangeProcess("novaPay", {
+      status: summary.errors ? "error" : ((summary.pending || hasGatewayWarningOnly) ? "warning" : "success"),
+      percent: 100,
+      stage: summary.errors ? "Завершено з помилками" : (summary.pending ? "Потрібна прив'язка" : "OK"),
+      message: `${novaPaySummaryText(summary)}${novaPayHistorySummaryText(summary.history)}`,
+      code: summary.codes[0] || summary.warningCodes?.[0] || ""
+    });
+    const historyText = novaPayHistorySummaryText(summary.history);
+    if (!silent) alert(`${novaPaySummaryText(summary)}${historyText}`);
+    render();
+    return summary;
+  } catch (error) {
+    const code = error.novaPayCode || (String(error.message || "").toLowerCase().includes("sign") ? NOVAPAY_ERROR_CODES.signatureError : NOVAPAY_ERROR_CODES.gatewayError);
+    settings.status = "error";
+    settings.lastCheck = currentTimestamp();
+    settings.lastErrorCode = code;
+    settings.lastMessage = `${code}: ${error.message}`;
+    setExchangeProcess("novaPay", { status: "error", percent: 100, stage: "Помилка gateway", message: `${code}: ${error.message}`, code });
+    addAudit(`NovaPay gateway: ${code} - ${error.message}`, "system");
+    if (!silent) {
+      alert(`${code}: ${novaPayErrorMessage(code)}`);
+      render();
+      return null;
+    } else {
+      saveState();
+    }
+    error.novaPayCode = code;
+    throw error;
+  }
+}
+
+function marketplaceAutoSyncStatusText() {
+  const settings = marketplaceSyncSettings();
+  return settings.lastMessage || (marketplaceAutoSyncEnabled ? "Автооновлення CRM SQL + Rozetka + NovaPay + Нова пошта увімкнено." : "Автооновлення CRM SQL + Rozetka + NovaPay + Нова пошта вимкнено.");
+}
+
+async function syncRozetkaOrdersFast({ silent = false } = {}) {
+  const settings = rozetkaInboundState();
+  const params = new URLSearchParams();
+  params.set("created_from", addDays(today, -14));
+  params.set("created_to", today);
+  params.set("types", "1");
+  params.set("page", "1");
+  params.set("maxPages", "1");
+  params.set("maxDetails", "20");
+  params.set("sort", "-id");
+  try {
+    setExchangeProcess("rozetka", { status: "running", percent: 10, stage: "Швидке оновлення", message: "Отримуємо останні замовлення Rozetka.", code: "" });
+    setRozetkaProgress("running", 20, "Швидке оновлення Rozetka", "Отримуємо останні замовлення: 1 сторінка, до 20 деталей.");
+    const payload = await fetchRozetkaInboundParams("/api/rozetka/orders/import", params);
+    const orders = rozetkaOrders(payload);
+    const delta = changedExternalRows("rozetka", "orders", orders, (order, index) => rozetkaExternalKey("orders", order, index));
+    const totals = delta.rows.reduce((acc, { row: order, change }) => {
+      const result = upsertRozetkaOrder(order);
+      acc[result] = (acc[result] || 0) + 1;
+      markExternalRecordApplied(change);
+      return acc;
+    }, { created: 0, updated: 0, skipped: delta.skipped });
+    finalizeRozetkaImport();
+    settings.lastOrdersSync = currentTimestamp();
+    settings.lastOrdersCount = orders.length;
+    settings.lastError = "";
+    state.rozetkaImportedOrderFilters = {
+      ...rozetkaImportedOrderFilter(),
+      expanded: true
+    };
+    setExchangeProcess("rozetka", { status: "success", percent: 100, stage: "OK", message: `Швидке оновлення: створено ${totals.created || 0}, оновлено ${totals.updated || 0}, отримано ${orders.length}.`, code: "" });
+    setRozetkaProgress("success", 100, "OK", `Швидке оновлення: створено ${totals.created || 0}, оновлено ${totals.updated || 0}, отримано ${orders.length}.`);
+    addAudit(`Rozetka API: швидке оновлення замовлень — створено ${totals.created || 0}, оновлено ${totals.updated || 0}, отримано ${orders.length}`, "system");
+    return { orders: orders.length, created: totals.created || 0, updated: totals.updated || 0 };
+  } catch (error) {
+    const code = rozetkaErrorCode(error);
+    settings.lastError = `Швидке оновлення замовлень: [${code}] ${error.message}`;
+    setExchangeProcess("rozetka", { status: "error", percent: 100, stage: "Помилка Rozetka", message: `[${code}] ${error.message}`, code });
+    setRozetkaProgress("error", 100, "Швидке оновлення Rozetka провалилося", error.message, code);
+    markRozetkaIntegration("token_needed");
+    addAudit(`Rozetka API: AUTO_SYNC_ROZETKA_ERROR [${code}] - ${error.message}`, "system");
+    error.code = code;
+    if (!silent) alert(`Rozetka швидке оновлення: [${code}] ${error.message}`);
+    throw error;
+  }
+}
+
+async function runMarketplaceAutoSync({ silent = false } = {}) {
+  if (marketplaceAutoSyncRunning) {
+    const settings = marketplaceSyncSettings();
+    settings.lastStatus = "running";
+    settings.lastMessage = "AUTO_SYNC_ALREADY_RUNNING: попереднє оновлення ще виконується.";
+    if (!silent) alert(settings.lastMessage);
+    return { skipped: true, errors: ["AUTO_SYNC_ALREADY_RUNNING"] };
+  }
+
+  marketplaceAutoSyncRunning = true;
+  const settings = marketplaceSyncSettings();
+  settings.lastRun = currentTimestamp();
+  settings.lastStatus = "running";
+  settings.lastMessage = "AUTO_SYNC_RUNNING: оновлюємо CRM SQL, Rozetka, NovaPay та Нову пошту.";
+  if (!silent) render();
+
+  const results = [];
+  const errors = [];
+  try {
+    await importOneCSqlLatestFromServer({ silent: true });
+    const crmSql = exchangeProcess("crmSql");
+    if (crmSql.status === "error") errors.push(`CRM SQL [${crmSql.code || "CRM_SQL_IMPORT_ERROR"}] ${crmSql.message}`);
+    else results.push(`CRM SQL: ${crmSql.message || "OK"}`);
+
+    try {
+      const rozetka = await syncRozetkaOrdersFast({ silent: true });
+      results.push(`Rozetka: ${rozetka.orders} замовлень, +${rozetka.created}, оновлено ${rozetka.updated}`);
+    } catch (error) {
+      errors.push(`Rozetka [${error.code || "ROZETKA_SYNC_ERROR"}] ${error.message}`);
+    }
+
+    try {
+      const novaPay = await pullNovaPayPaymentsFromGateway({ silent: true });
+      if (novaPay) results.push(novaPaySummaryText(novaPay));
+    } catch (error) {
+      errors.push(`NovaPay [${error.novaPayCode || NOVAPAY_ERROR_CODES.gatewayError}] ${error.message}`);
+    }
+
+    try {
+      const novaPoshtaDocs = await pullNovaPoshtaDocumentsFromGateway({ silent: true });
+      if (novaPoshtaDocs) results.push(`Нова пошта: документів ${novaPoshtaDocs.imported}, прив'язано ${novaPoshtaDocs.linkedOrders}`);
+    } catch (error) {
+      errors.push(`Нова пошта [${error.code || "NP_DOCUMENTS_GATEWAY_ERROR"}] ${error.message}`);
+    }
+
+    const novaPoshta = await syncNovaPoshtaDeliveries({ silent: true });
+    if (novaPoshta.errors) errors.push(`Нова пошта [${novaPoshta.codes?.[0] || novaPoshta.code || "NP_DELIVERY_GATEWAY_ERROR"}] помилки ${novaPoshta.errors}`);
+    else results.push(`Нова пошта: оновлено ${novaPoshta.updated}`);
+
+    settings.lastRun = currentTimestamp();
+    settings.lastStatus = errors.length ? "error" : "ok";
+    settings.lastMessage = [
+      errors.length ? `AUTO_SYNC_PARTIAL: ${errors.join("; ")}` : "AUTO_SYNC_OK",
+      ...results
+    ].join(" | ");
+    addAudit(`Marketplace auto sync: ${settings.lastMessage}`, "system");
+    marketplaceAutoSyncRunning = false;
+    if (!silent) alert(settings.lastMessage);
+    render();
+    return { results, errors };
+  } finally {
+    marketplaceAutoSyncRunning = false;
+  }
+}
+
+async function runUnifiedExchangeRefresh() {
+  const result = await runMarketplaceAutoSync({ silent: true });
+  const settings = marketplaceSyncSettings();
+  const message = settings.lastMessage || (result?.errors?.length ? `AUTO_SYNC_PARTIAL: ${result.errors.join("; ")}` : "AUTO_SYNC_OK");
+  alert(message);
+  render();
+  return result;
+}
+
+function setMarketplaceAutoSync(enabled) {
+  marketplaceAutoSyncEnabled = Boolean(enabled);
+  appLocalStorage.setItem("arms-crm-marketplace-auto-sync", marketplaceAutoSyncEnabled ? "true" : "false");
+  const settings = marketplaceSyncSettings();
+  settings.enabled = marketplaceAutoSyncEnabled;
+  settings.intervalMinutes = 10;
+  settings.lastStatus = marketplaceAutoSyncEnabled ? "ok" : "idle";
+  settings.lastMessage = marketplaceAutoSyncEnabled
+    ? "AUTO_SYNC_ENABLED: CRM оновлює CRM SQL + Rozetka + NovaPay + Нова пошта кожні 10 хв, поки вкладка прототипу відкрита."
+    : "AUTO_SYNC_DISABLED: автооновлення CRM SQL + Rozetka + NovaPay + Нова пошта вимкнено.";
+  addAudit(`Marketplace auto sync: ${settings.lastMessage}`, "system");
+  syncMarketplaceAutoSyncTimer();
+  render();
+}
+
+function syncMarketplaceAutoSyncTimer() {
+  if (marketplaceAutoSyncTimer) {
+    clearInterval(marketplaceAutoSyncTimer);
+    marketplaceAutoSyncTimer = null;
+  }
+  if (!marketplaceAutoSyncEnabled) return;
+  marketplaceAutoSyncTimer = setInterval(() => {
+    runMarketplaceAutoSync({ silent: true }).catch((error) => {
+      const settings = marketplaceSyncSettings();
+      settings.lastStatus = "error";
+      settings.lastMessage = `AUTO_SYNC_FATAL: ${error.message}`;
+      addAudit(`Marketplace auto sync: AUTO_SYNC_FATAL - ${error.message}`, "system");
+      saveState();
+    });
+  }, MARKETPLACE_AUTO_SYNC_INTERVAL_MS);
+}
+
+function reconcileExistingNovaPayTransactions() {
+  if (!canReconcileNovaPay()) return alert("Поточна роль не має права розносити платежі NovaPay.");
+  setExchangeProcess("novaPay", { status: "running", percent: 35, stage: "Звірка наявних", message: `Транзакцій у реєстрі: ${state.novaPayTransactions.length}.`, code: "" });
+  const summary = { received: state.novaPayTransactions.length, imported: state.novaPayTransactions.length, created: 0, pending: 0, errors: 0, duplicates: 0, skipped: 0, codes: [] };
+  state.novaPayTransactions.forEach((transaction) => {
+    const result = reconcileNovaPayTransaction(transaction);
+    if (result.status === "created") summary.created += 1;
+    if (result.status === "pending") summary.pending += 1;
+    if (result.status === "duplicate") summary.duplicates += 1;
+    if (result.status === "error") {
+      summary.errors += 1;
+      if (result.code) summary.codes.push(result.code);
+    }
+  });
+  const settings = novaPaySettings();
+  settings.lastCheck = currentTimestamp();
+  settings.status = summary.errors ? "error" : (summary.pending ? "warning" : "ok");
+  settings.lastErrorCode = summary.codes[0] || "";
+  settings.lastMessage = `NovaPay ручна звірка: створено ${summary.created}, потребує прив'язки ${summary.pending}, дублікати ${summary.duplicates}, помилки ${summary.errors}.`;
+  setExchangeProcess("novaPay", { status: summary.errors ? "error" : (summary.pending ? "warning" : "success"), percent: 100, stage: "Звірку завершено", message: novaPaySummaryText(summary), code: summary.codes[0] || "" });
+  addAudit(`${settings.lastMessage}${summary.codes.length ? ` Коди: ${uniqueList(summary.codes).join(", ")}` : ""}`, "system");
+  alert(novaPaySummaryText(summary));
+  render();
+}
+
+function novaPayDemoPayloadText() {
+  return JSON.stringify({ payments: seedState.novaPayTransactions }, null, 2);
+}
+
+function novaPayResultPill(transaction) {
+  if (transaction.reconciliationStatus === "created") return '<span class="pill good">оплату створено</span>';
+  if (transaction.reconciliationStatus === "duplicate") return '<span class="pill info">вже рознесено</span>';
+  if (transaction.reconciliationStatus === "pending") return `<span class="pill warn">${escapeHtml(transaction.resultCode || "потрібна прив'язка")}</span>`;
+  if (transaction.reconciliationStatus === "error") return `<span class="pill danger">${escapeHtml(transaction.resultCode || "помилка")}</span>`;
+  return '<span class="pill warn">очікує звірки</span>';
+}
+
+function renderNovaPayGatewaySettings(settings, disabled = "") {
+  return `
+    <fieldset class="exchange-fieldset full">
+      <legend>NovaPay API gateway</legend>
+      <p class="notice small">Безпечний режим: CRM викликає тільки серверний gateway. Приватний ключ NovaPay і підпис x-sign залишаються на сервері та не зберігаються в браузері.</p>
+      <div class="onec-connection-grid full">
+        <label class="field"><span>Стан</span><select name="novaPayEnabled" data-field-lock="novaPay" ${disabled}>
+          ${option("true", "Увімкнено", settings.enabled !== false)}
+          ${option("false", "Вимкнено", settings.enabled === false)}
+        </select></label>
+        <label class="field"><span>Режим</span><select name="novaPayMode" data-field-lock="novaPay" ${disabled}>
+          ${option("test", "Тест", settings.mode !== "production")}
+          ${option("production", "Production через gateway", settings.mode === "production")}
+        </select></label>
+        <label class="field wide"><span>Gateway URL</span><input name="novaPayGatewayUrl" data-field-lock="novaPay" value="${escapeHtml(settings.gatewayUrl || "/api/novapay/payments")}" placeholder="/api/novapay/payments" ${disabled}></label>
+        <label class="field"><span>Merchant/Public ID</span><input name="novaPayMerchantId" data-field-lock="novaPay" value="${escapeHtml(settings.merchantId || "")}" placeholder="без приватного ключа" ${disabled}></label>
+        <label class="field"><span>Рахунок/каса</span><input name="novaPayAccountId" data-field-lock="novaPay" value="${escapeHtml(settings.accountId || "")}" placeholder="опційно" ${disabled}></label>
+        <label class="field"><span>Автостворення оплат</span><select name="novaPayAutoCreatePayments" data-field-lock="novaPay" ${disabled}>
+          ${option("true", "Так, при збігу ТТН і суми", settings.autoCreatePayments !== false)}
+          ${option("false", "Ні, тільки імпорт списку", settings.autoCreatePayments === false)}
+        </select></label>
+      </div>
+      <p class="small muted">Останній стан: ${escapeHtml(settings.lastMessage || "ще не перевірялось")} ${settings.lastErrorCode ? `· код ${escapeHtml(settings.lastErrorCode)}` : ""}</p>
+    </fieldset>
+  `;
+}
+
+function renderNovaPayConnectionCard(settings) {
+  const canManage = canManageNovaPayApi();
+  const disabled = canManage ? "" : "disabled";
+  return `
+    <form class="form-grid no-print" data-action="update-novapay-settings">
+      <div class="exchange-summary full">
+        <strong>API підключення NovaPay</strong>
+        <span>Поточний gateway: ${escapeHtml(settings.gatewayUrl || "/api/novapay/payments")}. Підпис x-sign і приватний ключ мають бути тільки на сервері gateway.</span>
+      </div>
+      <p class="notice small full">Для реальних даних CRM спочатку використовує <code>NOVAPAY_GATEWAY_URL</code>, а якщо він порожній - прямий серверний SOAP gateway через <code>NOVAPAY_BUSINESS_LOGIN</code>, <code>NOVAPAY_REFRESH_TOKEN</code> і <code>NOVAPAY_CERTIFICATE_PATH</code>. Demo доступне через <code>?demo=1</code>; секрети не передаються в браузер.</p>
+      <label class="field"><span>Стан</span><select name="novaPayEnabled" data-field-lock="novaPay" ${disabled}>
+        ${option("true", "Увімкнено", settings.enabled !== false)}
+        ${option("false", "Вимкнено", settings.enabled === false)}
+      </select></label>
+      <label class="field"><span>Режим</span><select name="novaPayMode" data-field-lock="novaPay" ${disabled}>
+        ${option("test", "Тест", settings.mode !== "production")}
+        ${option("production", "Production через gateway", settings.mode === "production")}
+      </select></label>
+      <label class="field wide"><span>Gateway URL</span><input name="novaPayGatewayUrl" data-field-lock="novaPay" value="${escapeHtml(settings.gatewayUrl || "/api/novapay/payments")}" placeholder="/api/novapay/payments" ${disabled}></label>
+      <label class="field"><span>Merchant/Public ID</span><input name="novaPayMerchantId" data-field-lock="novaPay" value="${escapeHtml(settings.merchantId || "")}" placeholder="без приватного ключа" ${disabled}></label>
+      <label class="field"><span>Рахунок/каса</span><input name="novaPayAccountId" data-field-lock="novaPay" value="${escapeHtml(settings.accountId || "")}" placeholder="опційно" ${disabled}></label>
+      <label class="field"><span>Автостворення оплат</span><select name="novaPayAutoCreatePayments" data-field-lock="novaPay" ${disabled}>
+        ${option("true", "Так, при збігу ТТН і суми", settings.autoCreatePayments !== false)}
+        ${option("false", "Ні, тільки імпорт списку", settings.autoCreatePayments === false)}
+      </select></label>
+      <button class="secondary" type="submit" ${disabled}>Зберегти API підключення</button>
+      ${canManage ? "" : '<p class="notice warn small full">Поточна роль не має права змінювати NovaPay API.</p>'}
+    </form>
+  `;
+}
+
+function renderMarketplaceSyncControls() {
+  const settings = marketplaceSyncSettings();
+  const statusClass = settings.lastStatus === "error" ? "danger" : marketplaceAutoSyncEnabled ? "good" : "info";
+  const disabled = marketplaceAutoSyncRunning ? "disabled" : "";
+  return `
+    <div class="exchange-summary no-print" data-marketplace-sync-controls>
+      <div>
+        <strong>Оновлення Rozetka + NovaPay</strong>
+        <span>${escapeHtml(marketplaceAutoSyncStatusText())}</span>
+        <small>Автооновлення працює кожні 10 хв, поки вкладка CRM відкрита. Rozetka: швидкі замовлення без повного імпорту товарів; NovaPay: тільки серверний gateway.</small>
+      </div>
+      <div class="inline-actions">
+        <span class="pill ${statusClass}">${marketplaceAutoSyncEnabled ? "авто 10 хв" : "вручну"}</span>
+        <button class="primary" type="button" data-run-marketplace-sync ${disabled}>Оновити зараз</button>
+        <button class="secondary" type="button" data-toggle-marketplace-auto-sync ${disabled}>${marketplaceAutoSyncEnabled ? "Вимкнути авто" : "Увімкнути авто"}</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderExchangeProcessStrip(key, process = exchangeProcess(key)) {
+  return `
+    <div class="exchange-process-strip" data-exchange-process="${escapeHtml(key)}" data-process-status="${escapeHtml(process.status || "idle")}">
+      <div class="split compact-split">
+        <span class="pill ${exchangeStatusClass(process.status)}" data-exchange-process-status>${escapeHtml(exchangeStatusLabel(process.status, process.code))}</span>
+        <span class="small muted" data-exchange-process-updated>${escapeHtml(process.updatedAt || "")}</span>
+      </div>
+      <div class="progress-track" aria-label="Прогрес ${escapeHtml(process.label || key)}">
+        <div class="progress-bar" data-exchange-process-bar style="width:${Number(process.percent || 0)}%"></div>
+      </div>
+      <div class="split compact-split">
+        <span><strong data-exchange-process-percent>${Number(process.percent || 0)}%</strong> · <span data-exchange-process-stage>${escapeHtml(process.stage || "")}</span></span>
+        <span class="small muted">${escapeHtml(process.label || key)}</span>
+      </div>
+      <p class="small ${process.status === "error" ? "notice danger" : "muted"}" data-exchange-process-message>${escapeHtml(process.message || "")}</p>
+    </div>
+  `;
+}
+
+function renderExchangeSourceCard({ key, title, subtitle = "", metrics = "", actions = "", notice = "" }) {
+  const process = exchangeProcess(key);
+  return `
+    <article class="exchange-process-card" data-exchange-source-card="${escapeHtml(key)}">
+      <div class="split">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          ${subtitle ? `<p class="small muted">${escapeHtml(subtitle)}</p>` : ""}
+        </div>
+        <span class="pill ${exchangeStatusClass(process.status)}">${escapeHtml(process.label || title)}</span>
+      </div>
+      ${renderExchangeProcessStrip(key, process)}
+      ${metrics ? `<div class="exchange-card-metrics">${metrics}</div>` : ""}
+      ${actions ? `<div class="inline-actions no-print">${actions}</div>` : ""}
+      ${notice ? `<p class="notice small">${notice}</p>` : ""}
+    </article>
+  `;
+}
+
+const MARKETPLACE_EXCHANGE_ACTIONS = [
+  { id: "goods", label: "Товари", detail: "товари та публікації" },
+  { id: "orders", label: "Замовлення", detail: "нові та змінені" },
+  { id: "customerQuestions", label: "Питання клієнтів", detail: "чат покупця / питання" },
+  { id: "marketplaceThreads", label: "Звернення маркетплейсу", detail: "support / quality control" }
+];
+
+function renderMarketplaceExchangeActionButtons({ marketplaceId, marketplaceName, active = false, disabled = "" }) {
+  const isRozetka = marketplaceId === "rozetka" && active;
+  return `
+    <div class="exchange-action-grid" data-marketplace-exchange-actions="${escapeHtml(marketplaceId)}">
+      ${MARKETPLACE_EXCHANGE_ACTIONS.map((action) => {
+        const buttonDisabled = isRozetka ? disabled : "disabled";
+        const attrs = isRozetka
+          ? `data-rozetka-exchange-action="${escapeHtml(action.id)}" ${buttonDisabled}`
+          : `disabled aria-disabled="true"`;
+        const state = isRozetka ? "" : `<small class="planned-note">Заплановано для ${escapeHtml(marketplaceName)}</small>`;
+        return `
+          <button class="exchange-action-button ${isRozetka ? "" : "planned"}" type="button" ${attrs}>
+            <strong>${escapeHtml(action.label)}</strong>
+            <span>${escapeHtml(action.detail)}</span>
+            ${state}
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderUnifiedExchangeCenter(settings, disabled = "") {
+  const canExchange = canCreateDocument("dataExchange") && canEditField("dataExchangeScope");
+  const exchangeDisabled = canExchange ? "" : "disabled";
+  const syncDisabled = marketplaceAutoSyncRunning ? "disabled" : "";
+  const novaPayDisabled = canReconcileNovaPay() ? "" : "disabled";
+  const deliveryDisabled = canTrackMarketplaceDelivery() ? "" : "disabled";
+  const rozetka = rozetkaInboundState();
+  const novaPay = novaPaySettings();
+  const sync = marketplaceSyncSettings();
+  const npOrders = novaPoshtaTrackableOrders().length;
+  const npDocuments = (state.novaPoshtaDocuments || []).length;
+  const futureNotice = "Підключення буде додано в цей самий центр: окрема кнопка, прогрес і результат без перенесення в інші меню.";
+  return `
+    <section class="panel section-band settings-wide exchange-center" data-settings-section>
+      <div class="split">
+        <div>
+          <h2>6.1 Центр оновлень</h2>
+          <p class="muted small">Єдине місце для запуску SQL, Rozetka, NovaPay, Нової пошти та майбутніх маркетплейсів. Фінанси й замовлення показують результати, але не запускають обмін.</p>
+        </div>
+        <span class="pill ${sync.lastStatus === "error" ? "danger" : marketplaceAutoSyncEnabled ? "good" : "info"}">${marketplaceAutoSyncEnabled ? "авто 10 хв" : "вручну"}</span>
+      </div>
+      <div class="exchange-summary no-print">
+        <div>
+          <strong>Автоматизація обміну</strong>
+          <span>${escapeHtml(marketplaceAutoSyncStatusText())}</span>
+          <small>Автооновлення працює кожні 10 хв, поки вкладка CRM відкрита: CRM SQL, Rozetka, NovaPay і Нова пошта. 1C production не перезапускається і запис назад у 1C не виконується.</small>
+        </div>
+        <div class="inline-actions">
+          <button class="primary" type="button" data-run-unified-exchange ${syncDisabled}>Оновити все зараз</button>
+          <button class="secondary" type="button" data-toggle-marketplace-auto-sync ${syncDisabled}>${marketplaceAutoSyncEnabled ? "Вимкнути авто" : "Увімкнути авто"}</button>
+        </div>
+      </div>
+      <div class="exchange-center-grid">
+        ${renderExchangeSourceCard({
+          key: "crmSql",
+          title: "CRM SQL → CRM",
+          subtitle: "Останній знімок SQL /api/crm-sql/latest без запису назад у 1C.",
+          metrics: `<span>Джерело</span><strong>SQL</strong><small>${escapeHtml(dataExchangeState().oneCConnection?.lastSourceModifiedAt || "ще не запускали")}</small>`,
+          actions: `<button class="primary" type="button" data-import-onec-sql ${exchangeDisabled}>Оновити з SQL</button>`
+        })}
+        ${renderExchangeSourceCard({
+          key: "oneC",
+          title: "1C / BAS → CRM",
+          subtitle: "Файловий ToCRM або підготовка пакета. Production 1C не перезапускається.",
+          metrics: `<span>Авто ToCRM</span><strong>${oneCAutoImportEnabled ? "ON" : "OFF"}</strong><small>${escapeHtml(dataExchangeState().oneCConnection?.lastMessage || "")}</small>`,
+          actions: `<button class="secondary" type="button" data-import-onec-latest ${exchangeDisabled}>Забрати ToCRM</button><button class="ghost" type="button" data-toggle-onec-auto-import ${exchangeDisabled}>${oneCAutoImportEnabled ? "Вимкнути автоімпорт" : "Увімкнути автоімпорт"}</button><button class="ghost" type="button" data-export-onec-package ${exchangeDisabled}>Пакет 1C/BAS</button>`
+        })}
+        ${renderExchangeSourceCard({
+          key: "rozetka",
+          title: "Rozetka → CRM",
+          subtitle: "Один блок запуску: товари, замовлення, питання клієнтів і звернення ROZETKA. Детальні параметри відкриваються нижче в цьому ж розділі.",
+          metrics: `<span>Замовлення</span><strong>${rozetka.lastOrdersCount || 0}</strong><small>${escapeHtml(rozetka.lastOrdersSync || "ще не запускали")}</small>`,
+          actions: renderMarketplaceExchangeActionButtons({ marketplaceId: "rozetka", marketplaceName: "Rozetka", active: true, disabled: (syncDisabled || exchangeDisabled) })
+        })}
+        ${renderExchangeSourceCard({
+          key: "novaPay",
+          title: "NovaPay → CRM",
+          subtitle: "Отримання платежів через gateway і автоматичне рознесення по ТТН та сумі.",
+          metrics: `<span>Транзакції</span><strong>${(state.novaPayTransactions || []).length}</strong><small>${escapeHtml(novaPay.lastMessage || "ще не запускали")}</small>`,
+          actions: `<button class="primary" type="button" data-fetch-novapay-gateway ${novaPayDisabled}>Отримати платежі</button><button class="secondary" type="button" data-reconcile-novapay ${novaPayDisabled}>Звірити</button>`
+        })}
+        ${renderExchangeSourceCard({
+          key: "novaPoshta",
+          title: "Нова пошта → CRM",
+          subtitle: "Отримання всіх документів / ТТН з кабінету Нова пошта через серверний gateway і зв'язка з CRM-замовленнями.",
+          metrics: `<span>Документи / ТТН</span><strong>${npDocuments}</strong><small>до перевірки з CRM: ${npOrders}; API-ключ тільки в .env на сервері</small>`,
+          actions: `<button class="primary" type="button" data-fetch-nova-poshta-documents ${deliveryDisabled}>Отримати всі ТТН</button><button class="secondary" type="button" data-sync-nova-poshta-deliveries ${deliveryDisabled}>Оновити ТТН CRM</button>`
+        })}
+        ${renderExchangeSourceCard({
+          key: "prom",
+          title: "Prom → CRM",
+          subtitle: "Майбутній API-блок з тією самою структурою кнопок.",
+          actions: renderMarketplaceExchangeActionButtons({ marketplaceId: "prom", marketplaceName: "Prom" }),
+          notice: futureNotice
+        })}
+        ${renderExchangeSourceCard({
+          key: "epicentr",
+          title: "Epicentr → CRM",
+          subtitle: "Майбутній API-блок з тією самою структурою кнопок.",
+          actions: renderMarketplaceExchangeActionButtons({ marketplaceId: "epicentr", marketplaceName: "Epicentr" }),
+          notice: futureNotice
+        })}
+        ${renderExchangeSourceCard({
+          key: "allo",
+          title: "Allo → CRM",
+          subtitle: "Майбутній API-блок з тією самою структурою кнопок.",
+          actions: renderMarketplaceExchangeActionButtons({ marketplaceId: "allo", marketplaceName: "Allo" }),
+          notice: futureNotice
+        })}
+      </div>
+      <p class="notice ${canExchange ? "" : "warn"} small">${canExchange ? "Права на запуск і зміну обміну керуються в Налаштування → Ролі." : "Поточна роль не має права запускати або змінювати обмін даними."}</p>
+    </section>
+  `;
+}
+
+function renderNovaPayReconciliationPanel({ controls = true } = {}) {
+  const settings = novaPaySettings();
+  const rows = state.novaPayTransactions || [];
+  const canImport = canReconcileNovaPay();
+  const disabled = canImport ? "" : "disabled";
+  return `
+    <section class="panel section-band">
+      <div class="split">
+        <h2>5.2 NovaPay: рознесення оплат по ТТН</h2>
+        <span class="pill ${settings.status === "error" ? "danger" : settings.status === "ok" ? "good" : "info"}">${escapeHtml(settings.mode || "test")}</span>
+      </div>
+      <p class="notice small">CRM не приймає приватний ключ NovaPay у браузері. Отримання платежів і x-sign виконуються серверним gateway; у CRM зберігаються тільки gateway URL, публічний ID і результати звірки.</p>
+      ${controls ? renderNovaPayConnectionCard(settings) : '<p class="notice small">Запуск NovaPay, ручна звірка і JSON-імпорт перенесені в Налаштування → Обмін даними → 6.1 Центр оновлень.</p>'}
+      ${controls ? `
+        <div class="inline-actions no-print">
+          <button class="primary" type="button" data-fetch-novapay-gateway ${disabled}>Отримати з gateway</button>
+          <button class="secondary" type="button" data-reconcile-novapay ${disabled}>Звірити наявні</button>
+          <button class="ghost" type="button" data-fill-novapay-demo ${disabled}>Demo JSON</button>
+          <span class="small muted">${escapeHtml(settings.lastMessage || "NovaPay ще не імпортувався.")}</span>
+        </div>
+        <form class="form-grid no-print" data-action="import-novapay-json">
+          <label class="field full"><span>JSON відповіді gateway / NovaPay</span><textarea name="novaPayPayload" data-field-lock="novaPay" placeholder='{"payments":[{"id":"npay-1","ttn":"NP-590010333","amount":5400,"currency":"UAH"}]}' ${disabled}></textarea></label>
+          <button class="secondary" type="submit" ${disabled}>Імпортувати JSON і рознести</button>
+        </form>
+      ` : ""}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Дата</th><th>ТТН</th><th>Платник</th><th>Сума</th><th>Замовлення</th><th>Оплата CRM</th><th>Результат</th></tr></thead>
+          <tbody>
+            ${rows.map((transaction) => {
+              const order = byId(state.marketplaceOrders, transaction.orderId);
+              const invoice = byId(state.invoices, transaction.invoiceId);
+              return `
+                <tr>
+                  <td>${escapeHtml(transaction.paidAt || transaction.date || "-")}</td>
+                  <td><strong>${escapeHtml(transaction.ttn || "-")}</strong><br><span class="small muted">${escapeHtml(transaction.id)}</span></td>
+                  <td>${escapeHtml(transaction.payerName || "-")}</td>
+                  <td>${formatMoney(transaction.amount, transaction.currency)}</td>
+                  <td>${order ? `${escapeHtml(order.externalOrderId)}<br><span class="small muted">${escapeHtml(order.marketplace)}</span>` : invoice ? `${escapeHtml(invoice.id)}<br><span class="small muted">${escapeHtml(invoice.channel)}</span>` : "-"}</td>
+                  <td>${transaction.crmPaymentId ? escapeHtml(transaction.crmPaymentId) : "-"}</td>
+                  <td>${novaPayResultPill(transaction)}<br><span class="small muted">${escapeHtml(transaction.resultMessage || "")}</span></td>
+                </tr>
+              `;
+            }).join("") || '<tr><td colspan="7" class="muted">NovaPay-транзакцій ще немає.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function dataExchangeState() {
+  const settings = state.settings.dataExchange || {};
+  const defaults = seedState.settings.dataExchange;
+  return {
+    ...clone(defaults),
+    ...settings,
+    marketplaceIds: Array.isArray(settings.marketplaceIds) ? settings.marketplaceIds : clone(defaults.marketplaceIds),
+    marketplaceData: Array.isArray(settings.marketplaceData) ? settings.marketplaceData : clone(defaults.marketplaceData),
+    basData: Array.isArray(settings.basData) ? settings.basData : clone(defaults.basData),
+    oneCConnection: {
+      ...clone(defaults.oneCConnection),
+      ...(settings.basConnection || {}),
+      ...(settings.oneCConnection || {})
+    }
+  };
+}
+
+function exchangeCheckboxGroup(name, items, selected, disabled = "") {
+  const selectedSet = new Set(selected || []);
+  return `
+    <div class="exchange-check-grid">
+      ${items.map(([value, label]) => `
+        <label class="check-tile">
+          <input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(value)}" ${selectedSet.has(value) ? "checked" : ""} ${disabled}>
+          <span>${escapeHtml(label)}</span>
+        </label>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMarketplaceCapabilityMatrix() {
+  return `
+    <div class="exchange-capabilities full">
+      <div class="split">
+        <h3>Можливості обміну з маркетплейсами</h3>
+        <span class="pill info">перевірено по API</span>
+      </div>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Маркетплейс</th>
+              <th>Дані</th>
+              <th>Напрям</th>
+              <th>Важливо</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${DATA_EXCHANGE_MARKETPLACE_CAPABILITIES.map((item) => `
+              <tr>
+                <td><strong>${escapeHtml(item.marketplace)}</strong></td>
+                <td>${escapeHtml(item.exchange)}</td>
+                <td>${escapeHtml(item.direction)}</td>
+                <td>${escapeHtml(item.note)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function oneCExchangeMetrics() {
+  const shipments = state.marketplaceOrders.filter((order) => (
+    order.delivery?.ttn
+    || ["shipped", "delivered", "completed", "follow_up", "repeat_sale"].includes(normalizeMarketplaceOrderStatus(order.status))
+  ));
+  const receivables = state.invoices.filter((invoice) => invoiceDebt(invoice) > 0);
+  return [
+    ["products", "Товари", state.products.length, "номенклатура, коди, штрихкоди"],
+    ["clients", "Клієнти", state.clients.length, "контрагенти та контакти"],
+    ["orders", "Замовлення", state.marketplaceOrders.length, "маркетплейси → 1C"],
+    ["shipments", "Відвантаження", shipments.length, "ТТН і статус доставки"],
+    ["payments", "Оплати", state.payments.length, "каса, банк, маркетплейси"],
+    ["receivables", "Дебіторка", receivables.length, "непогашений борг клієнтів"],
+    ["payables", "Кредиторка", (state.payables || []).length, "борги постачальникам"],
+    ["stock", "Залишки", inventoryRows().length, "склади, фірми, кількість"]
+  ];
+}
+
+function renderOneCConnectionFields(settings, disabled = "") {
+  const connection = settings.oneCConnection || {};
+  return `
+    <div class="onec-connection-grid full">
+      <label class="field"><span>Система</span><select name="oneCSystem" ${disabled}>
+        ${option("1c_utp_ukraine_1_2", "1C УТП Україна 1.2", connection.system === "1c_utp_ukraine_1_2")}
+        ${option("bas_baf", "BAS / BAF", connection.system === "bas_baf")}
+      </select></label>
+      <label class="field"><span>Режим обміну</span><select name="oneCTransport" ${disabled}>
+        ${option("file_json", "Файловий JSON через VPN/RDP", connection.transport !== "http_bridge")}
+        ${option("http_bridge", "HTTP-шлюз у внутрішній мережі", connection.transport === "http_bridge")}
+      </select></label>
+      <label class="field"><span>Сервер 1C</span><input name="oneCServer" value="${escapeHtml(connection.server || "")}" placeholder="192.168.0.5" ${disabled}></label>
+      <label class="field"><span>Інфобаза</span><input name="oneCInfobase" value="${escapeHtml(connection.infobase || "")}" placeholder="pp_hor" ${disabled}></label>
+      <label class="field wide"><span>HTTP endpoint майбутнього шлюзу</span><input name="oneCEndpoint" value="${escapeHtml(connection.endpoint || "")}" placeholder="http://192.168.0.5/arms-crm/exchange" ${disabled}></label>
+      <label class="field"><span>Формат</span><select name="oneCFormat" ${disabled}>
+        ${option("json", "JSON", connection.format !== "xml")}
+        ${option("xml", "XML", connection.format === "xml")}
+      </select></label>
+      <label class="field"><span>Логін 1C/API</span><input name="oneCLogin" value="${escapeHtml(connection.login || "")}" autocomplete="username" ${disabled}></label>
+      <label class="field"><span>Пароль 1C/API</span><input name="oneCPassword" type="password" placeholder="${connection.password ? "залишити порожнім, щоб не змінювати" : ""}" autocomplete="current-password" ${disabled}></label>
+    </div>
+  `;
+}
+
+function renderOneCExchangeStatus(settings) {
+  const connection = settings.oneCConnection || {};
+  const metrics = oneCExchangeMetrics();
+  return `
+    <div class="onec-status-grid full">
+      ${metrics.map(([key, label, value, hint]) => `
+        <article class="exchange-status-card ${settings.basData?.includes(key) || settings.mode !== "selective" ? "" : "muted-card"}">
+          <strong>${escapeHtml(label)}</strong>
+          <span class="metric-number">${escapeHtml(value)}</span>
+          <small>${escapeHtml(hint)}</small>
+        </article>
+      `).join("")}
+    </div>
+    <div class="exchange-progress full" data-progress-status="${escapeHtml(connection.lastStatus || "draft")}">
+      <div class="split">
+        <strong>Стан 1C-обміну</strong>
+        ${statusPill(connection.lastStatus || "draft")}
+      </div>
+      <div class="progress-track"><div class="progress-bar" style="width: ${connection.lastStatus === "imported" ? 100 : connection.lastStatus === "exported" ? 65 : connection.lastStatus === "error" ? 100 : 20}%"></div></div>
+      <span class="small muted">${escapeHtml(connection.lastMessage || "Файловий JSON готовий. HTTP-шлюз можна підключити після публікації обробки у внутрішній мережі.")}</span>
+      <span class="small muted">Останній експорт: ${escapeHtml(connection.lastExport || "ще не було")} · останній імпорт: ${escapeHtml(connection.lastImport || "ще не було")}</span>
+    </div>
+  `;
+}
+
+function renderOneCTools(settings, canManage) {
+  const disabled = canManage ? "" : "disabled";
+  return `
+    <div class="onec-tools" data-onec-exchange-tools ${settings.channel === "bas" ? "" : "hidden"}>
+      <section class="panel section-band">
+        <div class="split">
+          <h3>1C JSON-пакет</h3>
+          <span class="pill info">файл зараз, HTTP після шлюзу</span>
+        </div>
+        <div class="inline-actions">
+          <button class="secondary" type="button" data-export-onec-package ${disabled}>Експорт пакета 1C</button>
+          <button class="primary" type="button" data-import-onec-latest ${disabled}>Імпорт з папки ToCRM</button>
+          <button class="primary" type="button" data-import-onec-sql ${disabled}>Імпорт із SQL</button>
+          <button class="ghost" type="button" data-toggle-onec-auto-import ${disabled}>${oneCAutoImportEnabled ? "Вимкнути автоімпорт" : "Увімкнути автоімпорт"}</button>
+          <button class="ghost" type="button" data-download-onec-bridge-spec ${disabled}>Завантажити схему шлюзу</button>
+          <button class="ghost" type="button" data-import-onec-demo ${disabled}>Імпорт demo-відповіді 1C</button>
+        </div>
+        <form class="form-grid" data-action="import-onec-package">
+          <label class="field full"><span>Файл відповіді з 1C / BAS / BAF</span><input name="oneCFile" type="file" accept=".json,application/json" data-onec-payload-file ${disabled}></label>
+          <label class="field full"><span>Імпорт відповіді з 1C / BAS / BAF JSON</span><textarea name="oneCPayload" placeholder='{"schema":"marketplace-crm.onec.exchange.v1","products":[],"clients":[],"payments":[],"stock":[],"shipments":[]}' ${disabled}></textarea></label>
+          <button class="primary" type="submit" ${disabled}>Імпортувати відповідь 1C</button>
+        </form>
+        <p class="notice small">Поточний стабільний контур: 1C формує файл товарів і залишків у D:\\CRM_Exchange\\ToCRM, CRM забирає останній JSON через локальний API. Для повної автоматики потрібен запуск CRM-сервера на машині, яка бачить цю папку, або мережева шара.</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderDataExchangePanel() {
+  const settings = dataExchangeState();
+  const canManage = canCreateDocument("dataExchange") && canEditField("dataExchangeScope");
+  const disabled = canManage ? "" : "disabled";
+  const channelLabel = settings.channel === "bas" ? "1C / BAS / BAF" : "Маркетплейси";
+  const modeLabel = settings.mode === "selective" ? "вибірково" : "вся інформація";
+  const marketplaceItems = state.integrations
+    .filter((item) => ["rozetka", "prom", "epicentr", "allo"].includes(item.id))
+    .map((item) => [item.id, item.name]);
+  const basIntegration = state.integrations.find((item) => item.id === "bas");
+  return `
+    <article class="panel settings-wide" data-data-exchange-panel>
+      <div class="split">
+        <h2>6.1 Обмін даними</h2>
+        <span class="pill info">${escapeHtml(channelLabel)} · ${escapeHtml(modeLabel)}</span>
+      </div>
+      <form class="form-grid data-exchange-form" data-action="update-data-exchange" data-data-exchange-form>
+        <label class="field"><span>Канал обміну</span><select name="channel" ${disabled} data-data-exchange-channel>
+          ${option("marketplaces", "Маркетплейси", settings.channel !== "bas")}
+          ${option("bas", "1C / BAS / BAF", settings.channel === "bas")}
+        </select></label>
+        <label class="field"><span>Обсяг інформації</span><select name="mode" ${disabled} data-data-exchange-mode>
+          ${option("all", "Вся інформація", settings.mode !== "selective")}
+          ${option("selective", "Вибірково", settings.mode === "selective")}
+        </select></label>
+        <div class="exchange-summary">
+          <strong>${escapeHtml(channelLabel)}</strong>
+          <span>${settings.mode === "selective" ? "CRM обмінює тільки вибрані блоки даних." : "CRM обмінює весь доступний набір даних цього каналу."}</span>
+        </div>
+
+        <fieldset class="exchange-fieldset full" data-exchange-channel-panel="marketplaces" ${settings.channel === "bas" ? "hidden" : ""}>
+          <legend>Маркетплейси</legend>
+          ${exchangeCheckboxGroup("marketplaceIds", marketplaceItems, settings.marketplaceIds, disabled)}
+          <h3>Дані маркетплейсів</h3>
+          ${exchangeCheckboxGroup("marketplaceData", DATA_EXCHANGE_MARKETPLACE_DATA, settings.marketplaceData, disabled)}
+          ${renderMarketplaceCapabilityMatrix()}
+        </fieldset>
+
+        <fieldset class="exchange-fieldset full" data-exchange-channel-panel="bas" ${settings.channel === "bas" ? "" : "hidden"}>
+          <legend>1C / BAS / BAF</legend>
+          <div class="exchange-status-card">
+            <strong>${escapeHtml(basIntegration?.name || "1C / BAS / BAF")}</strong>
+            ${statusPill(basIntegration?.status || "ok")}
+            <span class="small muted">${escapeHtml(basIntegration?.scope || "документи, номенклатура, контрагенти, залишки")}</span>
+          </div>
+          <h3>Підключення 1C</h3>
+          ${renderOneCConnectionFields(settings, disabled)}
+          <h3>Дані 1C / BAS / BAF</h3>
+          ${exchangeCheckboxGroup("basData", DATA_EXCHANGE_BAS_DATA, settings.basData, disabled)}
+          ${renderOneCExchangeStatus(settings)}
+        </fieldset>
+
+        ${renderNovaPayGatewaySettings(novaPaySettings(), disabled)}
+
+        <button class="primary" type="submit" ${disabled}>Зберегти обмін даними</button>
+        <p class="notice ${canManage ? "" : "warn"} small full">${canManage ? "Права на цей блок керуються у Налаштування → Команда → Ролі: “Обмін даними” та “Обмін: вся інформація / вибірково”." : "Поточна роль не має права змінювати налаштування обміну даними."}</p>
+      </form>
+      <div data-exchange-embedded-rozetka ${settings.channel === "bas" ? "hidden" : ""}>
+        ${renderRozetkaInboundPanel({ embedded: true })}
+      </div>
+      ${renderOneCTools(settings, canManage)}
+    </article>
+  `;
+}
+
+function renderFunnelSettings() {
+  const canManage = role().canEditSettings || isAdmin();
+  const disabled = canManage ? "" : "disabled";
+  return `
+    <article class="panel settings-wide">
+      <div class="split">
+        <h2>6.4 Воронки</h2>
+        <span class="pill info">SLA, умови, нагадування, переходи статусів</span>
+      </div>
+      <form class="stack" data-action="update-sales-funnel">
+        <div class="table-wrap compact-table funnel-settings-table">
+          <table>
+            <thead><tr><th>№</th><th>Код</th><th>Колір / статус</th><th>Назва</th><th>Опис</th><th>Де знаходиться</th><th>Умова входу</th><th>Умова виконання</th><th>Чим перемикається</th><th>Термін, год</th><th>Нагадування менеджеру</th><th>Активний</th></tr></thead>
+            <tbody>
+              ${salesFunnelRules().map((stage, index) => `
+                <tr>
+                  <td><strong>${index + 1}</strong></td>
+                  <td><code>${escapeHtml(stage.id)}</code></td>
+                  <td>
+                    <span class="pill ${stage.className}">${escapeHtml(stage.label)}</span>
+                    <select name="class_${escapeHtml(stage.id)}" ${disabled}>${SALES_FUNNEL_CLASS_OPTIONS.map(([value, label]) => option(value, label, value === stage.className)).join("")}</select>
+                  </td>
+                  <td><input class="compact-input" name="label_${escapeHtml(stage.id)}" value="${escapeHtml(stage.label)}" ${disabled}></td>
+                  <td><textarea class="compact-area" name="description_${escapeHtml(stage.id)}" rows="2" ${disabled}>${escapeHtml(stage.description || "")}</textarea></td>
+                  <td><textarea class="condition-area" name="menu_${escapeHtml(stage.id)}" rows="2" ${disabled}>${escapeHtml(stage.menuLocation || "")}</textarea></td>
+                  <td><textarea class="condition-area" name="entry_${escapeHtml(stage.id)}" rows="3" ${disabled}>${escapeHtml(stage.entryCondition || "")}</textarea></td>
+                  <td><textarea class="condition-area" name="completion_${escapeHtml(stage.id)}" rows="3" ${disabled}>${escapeHtml(stage.completionCondition || "")}</textarea></td>
+                  <td><textarea class="condition-area" name="switch_${escapeHtml(stage.id)}" rows="3" ${disabled}>${escapeHtml(stage.switchBy || "")}</textarea></td>
+                  <td><input class="compact-input" name="sla_${escapeHtml(stage.id)}" type="number" min="1" step="1" value="${escapeHtml(stage.slaHours)}" ${disabled}></td>
+                  <td><input name="reminder_${escapeHtml(stage.id)}" value="${escapeHtml(stage.reminder)}" ${disabled}></td>
+                  <td><select name="active_${escapeHtml(stage.id)}" ${disabled}>${option("true", "так", stage.active !== false)}${option("false", "ні", stage.active === false)}</select></td>
                 </tr>
               `).join("")}
             </tbody>
           </table>
         </div>
-      </div>
+        <button class="primary" type="submit" ${disabled}>Зберегти воронку</button>
+        <p class="notice ${canManage ? "" : "warn"} small">${canManage ? "Ці правила керують панеллю статусів, менеджерською дошкою, SLA, нагадуваннями і підказками переходів у Продажах." : "Поточна роль не має права змінювати налаштування воронки."}</p>
+      </form>
+    </article>
+  `;
+}
 
-      <div class="panel">
-        <h2>Журнал подій</h2>
-        <div class="timeline">
-          ${state.audit.slice(0, 8).map((item) => `
-            <div class="timeline-item">
-              <strong>${item.action}</strong>
-              <span class="small muted">${item.at} · ${item.actor}</span>
-            </div>
-          `).join("")}
-        </div>
+function renderCommunicatorSettings() {
+  const settings = communicatorSettings();
+  const canManage = role().canEditSettings || isAdmin();
+  const disabled = canManage ? "" : "disabled";
+  return `
+    <article class="panel settings-wide">
+      <div class="split">
+        <h2>6.3 Комунікатори та зв'язок</h2>
+        <span class="pill ${settings.viber.enabled ? "good" : "warn"}">Viber ${settings.viber.mode === "live" ? "live" : "test"}</span>
       </div>
+      <form class="form-grid" data-action="update-communicators">
+        <label class="field"><span>Viber</span><select name="viberEnabled" ${disabled}>${option("true", "увімкнено", settings.viber.enabled !== false)}${option("false", "вимкнено", settings.viber.enabled === false)}</select></label>
+        <label class="field"><span>Режим Viber</span><select name="viberMode" ${disabled}>${option("test", "тест CRM", settings.viber.mode !== "live")}${option("live", "бойовий API", settings.viber.mode === "live")}</select></label>
+        <label class="field"><span>Назва відправника</span><input name="viberSenderName" value="${escapeHtml(settings.viber.senderName || "")}" ${disabled}></label>
+        <label class="field"><span>Viber auth token</span><input name="viberAuthToken" type="password" value="${escapeHtml(settings.viber.authToken || "")}" placeholder="X-Viber-Auth-Token" ${disabled}></label>
+        <label class="field full"><span>Webhook URL</span><input name="viberWebhookUrl" value="${escapeHtml(settings.viber.webhookUrl || "")}" ${disabled}></label>
+        <label class="field full"><span>Шаблон повідомлення</span><textarea name="viberDefaultTemplate" ${disabled}>${escapeHtml(settings.viber.defaultTemplate || "")}</textarea></label>
+        <label class="field"><span>Запис розмов</span><select name="recordingEnabled" ${disabled}>${option("true", "увімкнено", settings.callRecording.enabled !== false)}${option("false", "вимкнено", settings.callRecording.enabled === false)}</select></label>
+        <label class="field"><span>Згода на запис</span><select name="recordingConsentRequired" ${disabled}>${option("true", "обов'язкова", settings.callRecording.consentRequired !== false)}${option("false", "не вимагати", settings.callRecording.consentRequired === false)}</select></label>
+        <label class="field"><span>Зберігати, днів</span><input name="recordingRetentionDays" type="number" min="1" value="${escapeHtml(settings.callRecording.retentionDays || 180)}" ${disabled}></label>
+        <label class="field"><span>Джерело запису</span><select name="recordingSource" ${disabled}>${option("browser_microphone", "мікрофон браузера", settings.callRecording.source !== "telephony")}${option("telephony", "телефонія/API", settings.callRecording.source === "telephony")}</select></label>
+        <button class="primary" type="submit" ${disabled}>Зберегти комунікатори</button>
+        <p class="notice small full">Бойовий Viber вимагає token, webhook і receiver підписаного користувача. Запис через браузер працює для мікрофона; для запису телефонної лінії потрібна інтеграція з IP-телефонією або провайдером дзвінків.</p>
+      </form>
+    </article>
+  `;
+}
+
+function renderMarketplaceSettings() {
+  const settings = dataExchangeState();
+  const canManageExchange = canCreateDocument("dataExchange") && canEditField("dataExchangeScope");
+  return `
+    <section class="grid two section-band">
+      ${renderUnifiedExchangeCenter(settings, canManageExchange ? "" : "disabled")}
+      ${renderDataExchangePanel()}
+
+      <article class="panel">
+        <h2>6.2 Логістика</h2>
+        <div class="chips">${variantEntries("delivery", true).map((entry) => `<span class="pill info">${escapeHtml(entry.name)}</span>`).join("")}</div>
+        <div class="chips">${variantEntries("deliveryPayers", true).map((entry) => `<span class="pill">${escapeHtml(entry.name)}</span>`).join("")}</div>
+      </article>
+
+      ${renderCommunicatorSettings()}
+
+      ${renderFunnelSettings()}
+
+      <article class="panel settings-wide">
+        <h2>6.5 Команда</h2>
+        ${renderTeamSummary()}
+      </article>
+
+      <section class="settings-wide section-band" data-settings-section>
+        <h2>6.6 Ролі та права</h2>
+        <div class="team-management">
+          ${renderRoles()}
+        </div>
+      </section>
+
+      ${renderLogFilePanel()}
     </section>
   `;
+}
+
+function renderTeamSummary() {
+  const activeEmployees = state.employees.filter((employee) => employee.active !== false);
+  const roleCounts = state.roles.map((roleItem) => ({
+    role: roleItem.name,
+    count: state.employees.filter((employee) => employee.roleName === roleItem.name).length
+  }));
+  return `
+    <div class="grid three">
+      <article class="card metric info"><span>Працівники</span><strong>${state.employees.length}</strong><small>${activeEmployees.length} активних</small></article>
+      <article class="card metric good"><span>Ролі</span><strong>${state.roles.length}</strong><small>матриці доступу окремо</small></article>
+      <article class="card metric warn"><span>Адміни</span><strong>${state.employees.filter((employee) => roleHasAdminAccess(state.roles.find((item) => item.name === employee.roleName))).length}</strong><small>canManageUsers</small></article>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Роль</th><th>Працівників</th><th>Стан</th></tr></thead>
+        <tbody>
+          ${roleCounts.map((item) => `
+            <tr>
+              <td>${escapeHtml(item.role)}</td>
+              <td>${item.count}</td>
+              <td>${item.count ? '<span class="pill good">використовується</span>' : '<span class="pill warn">без працівників</span>'}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+    <p class="notice small">Додавання працівників, логіни, паролі та матриці прав винесені в підпункт 6.6 “Ролі”.</p>
+  `;
+}
+
+function renderLogFilePanel() {
+  const preview = {
+    ...clone(seedState.clientLogPreview),
+    ...(state.clientLogPreview || {})
+  };
+  const rows = Array.isArray(preview.rows) ? preview.rows : [];
+  const messageClass = preview.lastErrorCode ? "warn" : preview.lastStatus === "ok" ? "" : "info";
+  return `
+    <article class="panel settings-wide">
+      <h2>6.7 Лог файл</h2>
+      <div class="grid two">
+        <div class="exchange-summary">
+          <span>Серверний HTTP / client-action лог</span>
+          <code class="path-code">${escapeHtml(preview.logPath || "D:\\Codex\\CRM\\marketplace-crm\\crm-http.ndjson")}</code>
+        </div>
+        <div class="exchange-summary">
+          <span>Робочий лог Codex</span>
+          <code class="path-code">${escapeHtml(preview.workLogPath || seedState.clientLogPreview.workLogPath)}</code>
+        </div>
+      </div>
+      <div class="inline-actions">
+        <button class="secondary" type="button" data-refresh-crm-log>Оновити лог</button>
+        <span class="pill info">${rows.length} записів</span>
+        ${preview.checkedAt ? `<span class="small muted">перевірено ${escapeHtml(preview.checkedAt)}</span>` : ""}
+      </div>
+      <p class="notice ${messageClass} small">${escapeHtml(preview.lastMessage || "Журнал ще не читали з сервера.")}${preview.lastErrorCode ? ` Код: ${escapeHtml(preview.lastErrorCode)}` : ""}</p>
+      <div class="table-wrap crm-log-table">
+        <table>
+          <thead><tr><th>Час</th><th>Подія</th><th>Запит</th><th>Статус / код</th><th>Результат</th></tr></thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.loggedAt || "-")}</td>
+                <td>${escapeHtml(row.event || "-")}<br><span class="small muted">${escapeHtml(row.requestId || "")}</span></td>
+                <td>${escapeHtml([row.method, row.path].filter(Boolean).join(" ") || "-")}<br><span class="small muted">${escapeHtml(row.remote || "")}</span></td>
+                <td>${escapeHtml([row.statusCode, row.code].filter(Boolean).join(" / ") || "-")}</td>
+                <td class="log-summary">${escapeHtml(row.summary || "-")}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="5" class="muted">Натисніть “Оновити лог”, щоб прочитати останні записи з сервера.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Час</th><th>Хто</th><th>Дія в CRM</th></tr></thead>
+          <tbody>
+            ${state.audit.slice(0, 10).map((item) => `<tr><td>${escapeHtml(item.at)}</td><td>${escapeHtml(item.actor)}</td><td>${escapeHtml(item.action)}</td></tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
+async function refreshCrmLogPreview() {
+  state.clientLogPreview = {
+    ...clone(seedState.clientLogPreview),
+    ...(state.clientLogPreview || {}),
+    lastStatus: "running",
+    lastMessage: "Читаємо останні записи з серверного журналу.",
+    lastErrorCode: ""
+  };
+  render();
+  try {
+    const response = await fetch(`${CLIENT_LOG_ENDPOINT}?limit=40`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store"
+    });
+    const payload = await response.json();
+    if (!response.ok || payload?.ok === false) {
+      throw new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+    }
+    const rows = Array.isArray(payload.rows) ? payload.rows.slice(0, 40) : [];
+    state.clientLogPreview = {
+      ...clone(seedState.clientLogPreview),
+      ...(state.clientLogPreview || {}),
+      logPath: payload.logPath || state.clientLogPreview?.logPath || "",
+      workLogPath: payload.workLogPath || seedState.clientLogPreview.workLogPath,
+      rows,
+      checkedAt: payload.checkedAt || currentTimestamp(),
+      lastStatus: "ok",
+      lastMessage: `LOG_READ_OK: отримано ${rows.length} останніх записів.`,
+      lastErrorCode: ""
+    };
+    addAudit(`Лог файл: LOG_READ_OK - отримано ${rows.length} записів`, "system");
+  } catch (error) {
+    const code = "LOG_READ_ERROR";
+    state.clientLogPreview = {
+      ...clone(seedState.clientLogPreview),
+      ...(state.clientLogPreview || {}),
+      rows: [],
+      checkedAt: currentTimestamp(),
+      lastStatus: "error",
+      lastMessage: `${code}: ${error.message}`,
+      lastErrorCode: code
+    };
+    addAudit(`Лог файл: ${code} - ${error.message}`, "system");
+  }
+  render();
 }
 
 function defaultSaleLine(productId = "") {
@@ -2945,7 +8615,7 @@ function defaultSaleLine(productId = "") {
   const salePrice = product ? productSalePrice(product, priceType) : { amount: 0, currency: "UAH" };
   return {
     productId: product?.id || "",
-    barcode: product?.barcode || product?.qrCode || "",
+    barcode: productPrimaryBarcode(product),
     qty: 1,
     price: salePrice.amount,
     currency: salePrice.currency,
@@ -3000,10 +8670,13 @@ function renderSaleInvoiceLine(line, index, priceType, context = {}) {
   return `
     <tr data-sale-line="${index}">
       <td>
-        <input name="barcode" data-sale-line-index="${index}" data-sale-barcode value="${escapeHtml(line.barcode || product?.barcode || "")}" placeholder="QR / штрихкод">
+        <div class="input-action">
+          <input name="barcode" data-sale-line-index="${index}" data-sale-barcode data-skip-suggestions data-linked-requisite="product" data-linked-parent-field="productId" data-linked-parent-scope="row" data-requisite-field="barcodes" data-requisite-label="QR / штрихкод" value="${escapeHtml(line.barcode || productPrimaryBarcode(product))}" placeholder="QR / штрихкод">
+          <button class="ghost" type="button" data-add-linked-requisite data-linked-parent-scope="row" data-target-name="barcode" title="Додати QR / штрихкод">+</button>
+        </div>
       </td>
       <td class="line-product">
-        <select name="productId" data-sale-line-index="${index}" data-sale-product>
+        <select name="productId" data-sale-line-index="${index}" data-sale-product data-linked-parent="product" data-linked-parent-scope="row">
           ${state.products.map((item) => option(item.id, `${item.type === "weapon" ? "Зброя" : "Товар"} · ${item.brand} ${item.model}`, item.id === product?.id)).join("")}
         </select>
         <span class="small muted">${product ? productCodes(product) : ""}</span>
@@ -3058,6 +8731,10 @@ function updateSaleDraftFromForm(form) {
     deliveryPayer: data.deliveryPayer,
     cashArticle: data.cashArticle,
     paymentMode: data.paymentMode,
+    paymentSource: data.paymentSource,
+    terminalId: data.terminalId,
+    prro: data.prro,
+    paymentRef: data.paymentRef,
     paid: data.paid,
     dueDays: data.dueDays,
     manager: data.manager,
@@ -3246,6 +8923,53 @@ function renderProducts() {
       </div>
     </section>
   `;
+}
+
+function productCreateForm() {
+  return `
+    <form class="form-grid" data-action="create-product">
+      <label class="field"><span>Тип</span><select name="type"><option value="regular">Звичайний товар</option><option value="weapon">Зброя</option></select></label>
+      ${dictionaryField("categories", "Категорія", "categoryValue", "newCategory", { placeholder: "нова категорія / група" })}
+      ${dictionaryField("units", "Одиниця", "unitValue", "newUnit", { placeholder: "нова одиниця виміру" })}
+      ${dictionaryField("brands", "Бренд", "brandValue", "newBrand", { placeholder: "новий бренд" })}
+      ${dictionaryField("models", "Модель", "modelValue", "newModel", { wide: true, placeholder: "нова модель" })}
+      ${dictionaryField("calibers", "Калібр", "caliberValue", "newCaliber", { required: false, selected: "без калібру", placeholder: "новий калібр для зброї" })}
+      <label class="field"><span>ЄРЗ</span><select name="erzRequired"><option value="false">ні</option><option value="true">так</option></select></label>
+      <div class="field wide">
+        <span>Штрих / QR</span>
+        <div class="input-action">
+          <input name="barcode" data-product-barcode required placeholder="скануйте або створіть код">
+          <button class="ghost" type="button" data-generate-product-barcode>Створити</button>
+        </div>
+      </div>
+      ${dictionaryField("supplierSkus", "Артикул постач.", "supplierSkuValue", "newSupplierSku", { placeholder: "новий артикул постачальника" })}
+      ${dictionaryField("internalCodes", "Внутр. код", "internalCodeValue", "newInternalCode", { placeholder: "новий внутрішній код" })}
+      ${dictionaryField("uktzed", "УКТЗЕД", "uktzedValue", "newUktzed", { placeholder: "новий код УКТЗЕД" })}
+      <label class="field"><span>Прихідна</span><input name="cost" data-field-lock="cost" value="0"></label>
+      <label class="field"><span>Валюта приходу</span><select name="costCurrency" data-field-lock="cost">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === "USD")).join("")}</select></label>
+      ${productPriceInputs({ price: 0, currency: "UAH", prices: {} })}
+      <label class="field"><span>Мін. залишок</span><input name="minStock" type="number" min="0" value="0"></label>
+      <label class="field"><span>Поставка, днів</span><input name="leadTimeDays" type="number" min="0" value="14"></label>
+      <label class="field wide"><span>SKU маркетплейсу</span><input name="marketplaceSku" placeholder="Rozetka/Prom/Epicentr/Allo"></label>
+      <label class="field"><span>Каталог / акція</span><select name="catalogTag">${catalogTagOptions("")}</select></label>
+      <label class="field full"><span>Опис / характеристики</span><textarea name="description" placeholder="опис та характеристики для сайту і маркетплейсів"></textarea></label>
+      <div class="field full">
+        <span>Фото товару</span>
+        <input type="file" name="photos" data-product-photos accept="${MARKETPLACE_IMAGE_EXTENSIONS}" multiple>
+        <p class="notice small">До 6 фото з комп'ютера. Дозволені формати: JPG/JPEG або PNG. Для синхронізації фото оптимізуються у JPG з білим фоном.</p>
+      </div>
+      <div class="photo-preview full" data-product-photo-preview>
+        <div class="photo-empty">Фото ще не додані. Дозволено до 6 файлів JPG/JPEG або PNG.</div>
+      </div>
+      <button class="primary" type="submit">Створити товар</button>
+    </form>
+  `;
+}
+
+function openCreateProductForm() {
+  productImagesDraft = [];
+  const modal = openModal("Створити товар", productCreateForm());
+  renderProductPhotoPreview(modal);
 }
 
 function productRows(products) {
@@ -4117,7 +9841,11 @@ function serialBadges(serialIds = []) {
 }
 
 function productCodes(product) {
-  return [product?.barcode, product?.qrCode].filter(Boolean).join(" / ") || "-";
+  return uniqueList([
+    ...linkedRequisiteValues(product, "product", "barcodes"),
+    ...linkedRequisiteValues(product, "product", "supplierSkus"),
+    ...linkedRequisiteValues(product, "product", "internalCodes")
+  ]).slice(0, 4).join(" / ") || "-";
 }
 
 function safeFilePart(value) {
@@ -4801,7 +10529,7 @@ function renderClients() {
         <h2>Новий клієнт</h2>
         <form class="form-grid" data-action="create-client">
           <label class="field wide"><span>Назва</span><input name="name" required placeholder="юридична або торгова назва"></label>
-          <label class="field"><span>Тип</span><select name="type">${variantOptions("clientTypes", "B2B")}</select></label>
+          <label class="field"><span>Тип</span><select name="type">${variantOptions("clientTypes", "Marketplace")}</select></label>
           <label class="field"><span>ЄДРПОУ / ІПН</span><input name="edrpou"></label>
           <label class="field"><span>Телефон</span><input name="phone"></label>
           <label class="field"><span>Email</span><input name="email" type="email"></label>
@@ -4811,10 +10539,6 @@ function renderClients() {
           <label class="field"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === "UAH")).join("")}</select></label>
           <label class="field"><span>Прайс</span><select name="priceType">${priceTypeOptions("retail")}</select></label>
           <label class="field"><span>Податки</span><select name="taxMode">${variantOptions("taxModes", "без ПДВ")}</select></label>
-          <label class="field"><span>Кабінет</span><select name="cabinetEnabled"><option value="true">увімкнути</option><option value="false">не створювати</option></select></label>
-          <label class="field"><span>Логін кабінету</span><input name="portalLogin" placeholder="для B2B входу"></label>
-          <label class="field"><span>Пароль кабінету</span><input name="portalPassword" type="text" placeholder="для B2B входу"></label>
-          <label class="field"><span>Відп. зберігання</span><select name="responsibleStorage"><option value="true">так</option><option value="false">ні</option></select></label>
           <label class="field full"><span>Адреса / доставка</span><textarea name="address" placeholder="адреса, контакт складу, правила відвантаження"></textarea></label>
           <button class="primary" type="submit">Створити клієнта</button>
         </form>
@@ -4822,10 +10546,10 @@ function renderClients() {
       <div class="panel">
         <h2>Контроль клієнтів</h2>
         <div class="grid two">
-          <article class="card metric info"><span>B2B клієнти</span><strong>${state.clients.filter((client) => client.type === "B2B").length}</strong><small>Із кабінетами, прайсами та умовами оплат.</small></article>
+          <article class="card metric info"><span>Покупці маркетплейсу</span><strong>${state.clients.filter((client) => client.type === "Marketplace").length}</strong><small>Контакти, реквізити, прайси та умови оплат.</small></article>
           <article class="card metric warn"><span>Кредитний ліміт</span><strong>${formatMoney(state.clients.reduce((sum, client) => sum + Number(client.creditLimitUAH || 0), 0))}</strong><small>Контроль відтермінування й дебіторки.</small></article>
         </div>
-        <p class="notice small">Клієнтські картки вже містять менеджера, прайс, податковий режим, валюту, кредитний ліміт, кабінет і ознаку відповідального зберігання.</p>
+        <p class="notice small">Клієнтські картки містять менеджера, контакти, прайс, податковий режим, валюту, кредитний ліміт та реквізити для замовлень маркетплейсу.</p>
       </div>
     </section>
 
@@ -4833,7 +10557,7 @@ function renderClients() {
       <h2>Клієнти</h2>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Клієнт</th><th>Тип</th><th>Контакти</th><th>Менеджер</th><th>Умови</th><th>Прайс / податки</th><th>Кабінет</th></tr></thead>
+          <thead><tr><th>Клієнт</th><th>Тип</th><th>Контакти</th><th>Менеджер</th><th>Умови</th><th>Прайс / податки</th></tr></thead>
           <tbody>
             ${state.clients.map((client) => `
               <tr class="clickable-row" data-open-client="${escapeHtml(client.id)}" title="Відкрити картку клієнта">
@@ -4843,12 +10567,48 @@ function renderClients() {
                 <td>${client.manager}</td>
                 <td>${client.paymentTerms}<br><span class="small muted">ліміт ${formatMoney(client.creditLimitUAH, client.currency || "UAH")}</span></td>
                 <td>${priceTypeName(client.priceType)}<br><span class="small muted">${client.taxMode || "-"}</span></td>
-                <td>${client.cabinetEnabled ? '<span class="pill good">кабінет</span>' : '<span class="pill">немає</span>'} ${client.responsibleStorage ? '<span class="pill info">зберігання</span>' : ""}</td>
               </tr>
             `).join("")}
           </tbody>
         </table>
       </div>
+    </section>
+  `;
+}
+
+function renderDeliveryApiSettingsPanel(disabled = "") {
+  const settings = deliveryApiSettings();
+  const providerRows = Object.entries(settings).map(([key, provider]) => {
+    const isNovaPoshta = key === "nova_poshta";
+    return `
+      <article class="card stack">
+        <div class="split">
+          <strong>${escapeHtml(provider.provider)}</strong>
+          ${deliveryApiProviderPill(provider)}
+        </div>
+        <label class="field"><span>API</span><select name="${key}_enabled" ${disabled}>${option("false", "вимкнено", !provider.enabled)}${option("true", "увімкнено", Boolean(provider.enabled))}</select></label>
+        <label class="field"><span>Режим</span><select name="${key}_mode" ${isNovaPoshta ? "disabled" : disabled}>${option("test", "тест", provider.mode !== "production")}${option("production", "бойовий", provider.mode === "production")}</select></label>
+        ${isNovaPoshta
+          ? `<p class="notice small">Ключ Нової пошти зберігається тільки у файлі <code class="path-code">.env</code> як <code>NOVA_POSHTA_API_KEY</code>. У браузер і localStorage ключ не записується.</p><input type="hidden" name="${key}_apiKey" value="">`
+          : `<label class="field"><span>API ключ</span><input name="${key}_apiKey" type="password" value="${escapeHtml(provider.apiKey || "")}" placeholder="ключ для відстеження ТТН" ${disabled}></label>`}
+        <label class="field wide"><span>Endpoint</span><input name="${key}_endpoint" value="${escapeHtml(provider.endpoint || "")}" ${isNovaPoshta ? "readonly" : disabled}></label>
+        <p class="small muted">Остання перевірка: ${escapeHtml(provider.lastCheck || "ще не перевіряли")}</p>
+      </article>
+    `;
+  }).join("");
+  return `
+    <section class="panel section-band">
+      <div class="split">
+        <div>
+          <h2>API доставок</h2>
+          <p class="muted small">Підключення Нової пошти та Укрпошти для читання статусу ТТН. CRM у цьому прототипі не створює відправлення назад у служби доставки.</p>
+        </div>
+        <span class="pill info">read-only tracking</span>
+      </div>
+      <form class="form-grid" data-action="update-delivery-api-settings">
+        <div class="grid two full">${providerRows}</div>
+        <button class="primary" type="submit" ${disabled}>Зберегти API доставок</button>
+      </form>
     </section>
   `;
 }
@@ -4864,7 +10624,7 @@ function renderSettings() {
       <article class="card metric info"><span>Термінали</span><strong>${state.settings.paymentTerminals.length}</strong><small>Для оплат карткою з прив'язкою до фірми.</small></article>
       <article class="card metric good"><span>Прайси</span><strong>${activeSalePriceTypes().length}</strong><small>Активні типи цін у картці товару.</small></article>
       <article class="card metric info"><span>Довідники документів</span><strong>${Object.values(state.settings.variantDictionaries || {}).flat().length}</strong><small>Ієрархічні списки для вибору в документах.</small></article>
-      <article class="card metric warn"><span>Параметри каталогу</span><strong>${Object.values(state.settings.catalogParameters || {}).flat().length}</strong><small>Фільтри B2B прайсів: тип, бренд, категорія, калібр, акції.</small></article>
+      <article class="card metric warn"><span>Параметри каталогу</span><strong>${Object.values(state.settings.catalogParameters || {}).flat().length}</strong><small>Фільтри маркетплейсного каталогу: тип, бренд, категорія, калібр, акції.</small></article>
     </section>
 
     <section class="grid two section-band">
@@ -4887,6 +10647,8 @@ function renderSettings() {
         </form>
       </div>
     </section>
+
+    ${renderDeliveryApiSettingsPanel(disabled)}
 
     <section class="panel section-band">
       <h2>Довідники документів</h2>
@@ -4917,7 +10679,7 @@ function renderSettings() {
     </section>
 
     <section class="panel section-band">
-      <h2>Параметри каталогу B2B</h2>
+      <h2>Параметри каталогу маркетплейсу</h2>
       <form class="form-grid" data-action="create-catalog-parameter">
         <label class="field"><span>Каталог</span><select name="parameterKey" ${disabled}>${CATALOG_PARAMETER_DEFINITIONS.map((item) => option(item.key, item.label)).join("")}</select></label>
         <label class="field"><span>Назва</span><input name="name" required placeholder="назва для списку" ${disabled}></label>
@@ -4937,7 +10699,7 @@ function renderSettings() {
           </tbody>
         </table>
       </div>
-      <p class="notice small">Ці довідники використовуються у верхньому відборі B2B каталогу. Бренди, категорії та калібри також синхронізуються з картками товарів.</p>
+      <p class="notice small">Ці довідники використовуються у верхньому відборі маркетплейсного каталогу. Бренди, категорії та калібри також синхронізуються з картками товарів.</p>
     </section>
 
     <section class="panel section-band">
@@ -5672,6 +11434,15 @@ function marketplacePublicationFilter() {
   };
 }
 
+function productTableFilters() {
+  const filter = state.productTableFilters || {};
+  return {
+    catalog: filter.catalog || "",
+    stock: filter.stock || "",
+    publications: filter.publications || ""
+  };
+}
+
 function normalizeSearchText(value) {
   return String(value ?? "")
     .toLowerCase()
@@ -5682,6 +11453,264 @@ function normalizeSearchText(value) {
 
 function searchWords(value) {
   return normalizeSearchText(value).split(" ").filter(Boolean);
+}
+
+function normalizeClientSources(client) {
+  const rows = Array.isArray(client.sources) ? client.sources : [];
+  const normalized = rows
+    .map((source) => typeof source === "string" ? { label: source } : (source || {}))
+    .map((source) => ({
+      type: source.type || client.sourceType || client.createdFrom || "crm",
+      label: source.label || source.sourceName || source.source || client.sourceText || client.sourceName || client.source || "",
+      detail: source.detail || source.orderId || source.file || client.sourceOrderId || client.counterpartyCode || client.externalId || client.oneCRef || "",
+      orderId: source.orderId || client.sourceOrderId || "",
+      file: source.file || client.sourceFile || "",
+      date: source.date || client.importedAt || client.createdAt || client.updatedAt || today
+    }))
+    .filter((source) => source.label || source.detail || source.file || source.orderId);
+  const fallbackLabel = client.sourceText || client.sourceName || client.source || (client.createdFrom === "sql_1c" ? "SQL / 1C" : client.createdFrom === "marketplace_order" ? "Маркетплейс / замовлення" : "CRM");
+  if (!normalized.length && fallbackLabel) {
+    normalized.push({
+      type: client.sourceType || client.createdFrom || "crm",
+      label: fallbackLabel,
+      detail: client.sourceOrderId || client.counterpartyCode || client.externalId || client.oneCRef || "",
+      orderId: client.sourceOrderId || "",
+      file: client.sourceFile || "",
+      date: client.importedAt || client.createdAt || client.updatedAt || today
+    });
+  }
+  const seen = new Set();
+  return normalized.filter((source) => {
+    const key = [source.type, source.label, source.detail, source.orderId, source.file].join("|").toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function clientSourceLabel(client) {
+  const sources = Array.isArray(client.sources) ? client.sources : [];
+  const labels = sources.map((source) => source?.label || source?.source || source?.type).filter(Boolean);
+  if (labels.length) return [...new Set(labels)].join(", ");
+  return client.sourceText || client.sourceName || client.source || (client.createdFrom === "sql_1c" ? "SQL / 1C" : client.createdFrom === "marketplace_order" ? "Маркетплейс / замовлення" : "CRM");
+}
+
+function addClientSource(client, source) {
+  client.sources = normalizeClientSources(client);
+  const normalized = normalizeClientSources({ ...client, sources: [source] })[0];
+  if (!normalized) return;
+  const key = [normalized.type, normalized.label, normalized.detail, normalized.orderId, normalized.file].join("|").toLowerCase();
+  if (!client.sources.some((item) => [item.type, item.label, item.detail, item.orderId, item.file].join("|").toLowerCase() === key)) {
+    client.sources.push(normalized);
+  }
+  client.sourceType = client.sourceType || normalized.type;
+  client.sourceName = client.sourceName || normalized.label;
+  client.sourceText = clientSourceLabel(client);
+}
+
+function clientDateForFilter(client) {
+  return String(client.updatedAt || client.importedAt || client.createdAt || today).slice(0, 10);
+}
+
+function clientSearchText(client) {
+  return normalizeSearchText([
+    client.name,
+    client.fullName,
+    client.type,
+    client.edrpou,
+    client.counterpartyCode,
+    client.externalId,
+    client.oneCRef,
+    client.phone,
+    client.email,
+    client.address,
+    client.manager,
+    client.paymentTerms,
+    client.currency,
+    priceTypeName(client.priceType),
+    client.taxMode,
+    clientSourceLabel(client),
+    client.sourceOrderId,
+    client.sourceFile
+  ].filter(Boolean).join(" "));
+}
+
+function salesClientMatchesBaseFilter(client, filter) {
+  return dateInSingleAwarePeriod(clientDateForFilter(client), filter)
+    && (!filter.source || clientSourceLabel(client) === filter.source);
+}
+
+function salesClientMatchesSearch(client, words) {
+  if (!words.length) return true;
+  const haystack = clientSearchText(client);
+  return words.every((word) => haystack.includes(word));
+}
+
+function salesClientSourceOptions(selectedSource = "") {
+  const sources = [...new Set(state.clients.map(clientSourceLabel).filter(Boolean))].sort((first, second) => first.localeCompare(second));
+  return option("", "усі джерела", !selectedSource) + sources.map((source) => option(source, source, source === selectedSource)).join("");
+}
+
+function renderSalesClientFilters(filter, visibleCount, totalCount) {
+  const hasFilter = filter.search || filter.source || filter.from || filter.to;
+  return `
+    <form class="period-toolbar no-print" data-sales-client-filter>
+      <label class="field wide"><span>Пошук по назві</span><input name="search" data-sales-client-search value="${escapeHtml(filter.search)}" placeholder="назва, телефон, ЄДРПОУ, код, замовлення"></label>
+      <label class="field"><span>Джерело</span><select name="source" data-sales-client-filter-input>${salesClientSourceOptions(filter.source)}</select></label>
+      <label class="field"><span>Дата від</span><input name="from" type="date" value="${escapeHtml(filter.from)}" data-sales-client-filter-input></label>
+      <label class="field"><span>Дата до</span><input name="to" type="date" value="${escapeHtml(filter.to)}" data-sales-client-filter-input></label>
+      <button class="ghost" type="button" data-reset-sales-client-filter ${hasFilter ? "" : "disabled"}>Скинути</button>
+      <span class="pill info" data-sales-client-result-count>${visibleCount}/${totalCount}</span>
+    </form>
+  `;
+}
+
+function renderSalesClientRow(client, visible = true) {
+  const source = clientSourceLabel(client);
+  const details = [client.counterpartyCode, client.externalId, client.oneCRef, client.sourceOrderId].filter(Boolean).join(" · ");
+  return `
+    <tr class="clickable-row" data-sales-client-row data-client-search-text="${escapeHtml(clientSearchText(client))}" data-open-client="${escapeHtml(client.id)}" style="${visible ? "" : "display:none"}" title="Відкрити картку клієнта">
+      <td><strong>${escapeHtml(source)}</strong><br><span class="small muted">${escapeHtml(details || client.sourceFile || "-")}</span></td>
+      <td><strong>${escapeHtml(client.name || "-")}</strong><br><span class="small muted">${escapeHtml(client.type || "-")} · ${escapeHtml(clientDateForFilter(client))}</span></td>
+      <td>${escapeHtml(client.edrpou || "-")}<br><span class="small muted">${escapeHtml(client.counterpartyCode || client.externalId || client.oneCRef || "-")}</span></td>
+      <td>${escapeHtml(client.phone || "-")}<br><span class="small muted">${escapeHtml(client.email || "-")}</span></td>
+      <td>${escapeHtml(client.address || "-")}</td>
+      <td>${escapeHtml(client.manager || "-")}</td>
+      <td>${escapeHtml(client.paymentTerms || "-")}<br><span class="small muted">ліміт ${formatMoney(client.creditLimitUAH || 0, client.currency || "UAH")}</span></td>
+      <td>${escapeHtml(priceTypeName(client.priceType) || client.priceType || "-")}<br><span class="small muted">${escapeHtml(client.taxMode || "-")}</span></td>
+    </tr>
+  `;
+}
+
+function applySalesClientSearch(root = document) {
+  const input = root.querySelector("[data-sales-client-search]");
+  const value = input?.value || "";
+  const words = searchWords(value);
+  let visible = 0;
+  let total = 0;
+  root.querySelectorAll("[data-sales-client-row]").forEach((row) => {
+    total += 1;
+    const haystack = row.dataset.clientSearchText || "";
+    const show = words.every((word) => haystack.includes(word));
+    row.style.display = show ? "" : "none";
+    if (show) visible += 1;
+  });
+  const count = root.querySelector("[data-sales-client-result-count]");
+  if (count) count.textContent = `${visible}/${total}`;
+  const reset = root.querySelector("[data-reset-sales-client-filter]");
+  if (reset) reset.disabled = !(value.trim() || salesClientFilter().source || salesClientFilter().from || salesClientFilter().to);
+  const empty = root.querySelector("[data-sales-client-empty]");
+  if (empty) empty.style.display = visible || !total ? "none" : "";
+}
+
+function renderSalesClientsPanel() {
+  const filter = salesClientFilter();
+  const baseClients = state.clients.filter((client) => salesClientMatchesBaseFilter(client, filter));
+  const words = searchWords(filter.search);
+  const visibleClients = baseClients.filter((client) => salesClientMatchesSearch(client, words));
+  const emptyText = baseClients.length ? "Немає клієнтів за пошуком." : "Немає клієнтів за вибраними фільтрами.";
+  return `
+    <section class="panel section-band" data-print-area="salesClients" data-print-title="Продажі · клієнти">
+      <div class="split">
+        <div>
+          <h2>2.4 Клієнти</h2>
+          <p class="small muted">Контрагенти з SQL/1C і покупці, створені із замовлень маркетплейсів. Колонка «Джерело» показує, звідки додано запис.</p>
+        </div>
+        <span class="pill info">${visibleClients.length} клієнтів</span>
+      </div>
+      ${renderSalesClientFilters(filter, visibleClients.length, baseClients.length)}
+      <details class="order-dropdown" data-sales-clients-dropdown ${filter.expanded ? "open" : ""}>
+        <summary>
+          <span>
+            <strong>Клієнти / контрагенти</strong>
+            <small>${filter.expanded ? "Натисніть, щоб згорнути список." : "Натисніть, щоб розгорнути список."}</small>
+          </span>
+          <span class="pill info" data-sales-client-summary-count>${visibleClients.length} рядків</span>
+        </summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Джерело</th>
+                <th>Клієнт / контрагент</th>
+                <th>ЄДРПОУ / ІПН</th>
+                <th>Контакти</th>
+                <th>Адреса</th>
+                <th>Менеджер</th>
+                <th>Умови</th>
+                <th>Прайс / податки</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${baseClients.map((client) => renderSalesClientRow(client, salesClientMatchesSearch(client, words))).join("")}
+              <tr data-sales-client-empty style="${visibleClients.length || !baseClients.length ? "display:none" : ""}">
+                <td colspan="8" class="muted">${emptyText}</td>
+              </tr>
+              ${!baseClients.length ? `<tr><td colspan="8" class="muted">${emptyText}</td></tr>` : ""}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  `;
+}
+
+function productTableSearchText(source) {
+  const product = source?.product || byId(state.products, source?.productId || source?.id);
+  return normalizeSearchText([
+    productLabel(product),
+    product?.category,
+    product?.supplierSku,
+    product?.internalCode,
+    product?.barcode,
+    source?.title,
+    source?.sku,
+    source?.externalId,
+    source?.marketplace
+  ].filter(Boolean).join(" "));
+}
+
+function productTableMatchesName(source, search) {
+  const words = searchWords(search);
+  if (!words.length) return true;
+  const haystack = productTableSearchText(source);
+  return words.every((word) => haystack.includes(word));
+}
+
+function renderProductTableSearch(tableKey, label, visibleCount, totalCount) {
+  const filters = productTableFilters();
+  const value = filters[tableKey] || "";
+  return `
+    <div class="product-table-toolbar no-print">
+      <label class="field compact">
+        <span>Пошук по назві</span>
+        <input name="productTableSearch-${escapeHtml(tableKey)}" data-product-table-search="${escapeHtml(tableKey)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(label)}">
+      </label>
+      <span class="pill info" data-product-table-count="${escapeHtml(tableKey)}">${visibleCount}/${totalCount}</span>
+      <button class="ghost" type="button" data-reset-product-table-search="${escapeHtml(tableKey)}" ${value ? "" : "disabled"}>Скинути</button>
+    </div>
+  `;
+}
+
+function applyProductTableSearch(tableKey) {
+  const input = document.querySelector(`[data-product-table-search="${CSS.escape(tableKey)}"]`);
+  const value = input?.value || "";
+  const words = searchWords(value);
+  let visible = 0;
+  let total = 0;
+  $$(`[data-product-table-row="${CSS.escape(tableKey)}"]`).forEach((row) => {
+    total += 1;
+    const haystack = row.dataset.productSearchText || "";
+    const show = words.every((word) => haystack.includes(word));
+    row.style.display = show ? "" : "none";
+    if (show) visible += 1;
+  });
+  const count = document.querySelector(`[data-product-table-count="${CSS.escape(tableKey)}"]`);
+  if (count) count.textContent = `${visible}/${total}`;
+  const reset = document.querySelector(`[data-reset-product-table-search="${CSS.escape(tableKey)}"]`);
+  if (reset) reset.disabled = !value.trim();
+  const empty = document.querySelector(`[data-product-table-empty="${CSS.escape(tableKey)}"]`);
+  if (empty) empty.style.display = visible || !total ? "none" : "";
 }
 
 function marketplacePublicationSearchText(publication) {
@@ -5733,12 +11762,11 @@ function rozetkaImportedOrderFilter() {
 }
 
 function rozetkaImportedOrderTotal(order) {
-  return Number(order.payment?.amount || (Number(order.qty || 1) * Number(order.price || 0)));
+  return Number(order.payment?.amount || marketplaceOrderTotal(order));
 }
 
 function rozetkaImportedOrderProductLabel(order) {
-  const product = byId(state.products, order.productId);
-  return product ? `${product.brand} ${product.model}` : order.sku || "Товар Rozetka";
+  return marketplaceOrderProductsSummary(order) || order.sku || "Товар Rozetka";
 }
 
 function rozetkaImportedOrderSortValue(order, key) {
@@ -5795,7 +11823,7 @@ function renderMarketplaceOrderFilters(names, filter, resultCount) {
       <label class="field compact"><span>Дата до</span><input name="to" type="date" value="${escapeHtml(filter.to)}"></label>
       <label class="field compact"><span>Статус</span><select name="status">
         <option value="">Всі статуси</option>
-        ${MARKETPLACE_ORDER_STATUSES.map((item) => option(item.id, item.label, item.id === filter.status)).join("")}
+        ${marketplaceOrderStatusOptions(filter.status)}
       </select></label>
       <label class="field compact"><span>Маркетплейс</span><select name="marketplace">
         <option value="">Всі маркетплейси</option>
@@ -5811,12 +11839,27 @@ function renderMarketplaceOrderFilters(names, filter, resultCount) {
 function defaultMarketplacePublicationLine(productId = "") {
   const product = byId(state.products, productId) || state.products[0];
   const price = product ? productSalePrice(product, marketplacePriceTypeId()) : { amount: 0, currency: "UAH" };
+  const productCategory = product?.category || "";
   return {
     marketplace: marketplaceNames()[0] || "",
     productId: product?.id || "",
-    sku: product?.supplierSku || product?.internalCode || "",
+    sku: productPrimarySku(product),
     externalId: "",
     title: product ? `${product.brand} ${product.model}` : "",
+    categoryName: productCategory,
+    categoryId: "",
+    groupParam: product?.caliber || product?.unit || productCategory,
+    filter1Name: "Бренд",
+    filter1Value: product?.brand || "",
+    filter2Name: product?.caliber ? "Калібр" : "Категорія",
+    filter2Value: product?.caliber || productCategory,
+    filter3Name: "Модель",
+    filter3Value: product?.model || "",
+    weightKg: "",
+    lengthCm: "",
+    widthCm: "",
+    heightCm: "",
+    cargoPlaces: 1,
     price: price.amount || product?.price || 0,
     currency: price.currency || product?.currency || "UAH",
     manager: state.currentManager
@@ -5840,14 +11883,41 @@ function renderMarketplacePublicationLine(line, index, names) {
         </select>
       </td>
       <td class="line-product">
-        <select name="productId" data-marketplace-publication-line-index="${index}" data-marketplace-publication-product>
+        <select name="productId" data-marketplace-publication-line-index="${index}" data-marketplace-publication-product data-linked-parent="product" data-linked-parent-scope="row">
           ${state.products.map((item) => option(item.id, `${item.brand} ${item.model}`, item.id === product?.id)).join("")}
         </select>
         <span class="small muted">${product ? productCodes(product) : ""}</span>
       </td>
-      <td><input name="sku" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.sku || "")}" required placeholder="SKU"></td>
+      <td>
+        <div class="input-action">
+          <input name="sku" data-marketplace-publication-line-index="${index}" data-skip-suggestions data-linked-requisite="product" data-linked-parent-field="productId" data-linked-parent-scope="row" data-requisite-field="skus" data-requisite-label="SKU товару" value="${escapeHtml(line.sku || "")}" required placeholder="SKU">
+          <button class="ghost" type="button" data-add-linked-requisite data-linked-parent-scope="row" data-target-name="sku" title="Додати SKU до товару">+</button>
+        </div>
+      </td>
       <td><input name="externalId" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.externalId || "")}" placeholder="id каналу"></td>
       <td class="line-product"><input name="title" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.title || "")}" required placeholder="назва публікації"></td>
+      <td class="line-product marketplace-requirements-cell">
+        <input name="categoryName" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.categoryName || "")}" required placeholder="категорія маркетплейсу">
+        <input name="categoryId" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.categoryId || "")}" placeholder="ID категорії / rz_id">
+        <input name="groupParam" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.groupParam || "")}" placeholder="параметр групування">
+        <div class="requirements-grid">
+          <input name="filter1Name" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.filter1Name || "")}" placeholder="фільтр 1">
+          <input name="filter1Value" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.filter1Value || "")}" placeholder="значення 1">
+          <input name="filter2Name" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.filter2Name || "")}" placeholder="фільтр 2">
+          <input name="filter2Value" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.filter2Value || "")}" placeholder="значення 2">
+          <input name="filter3Name" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.filter3Name || "")}" placeholder="фільтр 3">
+          <input name="filter3Value" data-marketplace-publication-line-index="${index}" value="${escapeHtml(line.filter3Value || "")}" placeholder="значення 3">
+        </div>
+      </td>
+      <td class="line-product marketplace-logistics-cell">
+        <div class="requirements-grid">
+          <input name="weightKg" data-marketplace-publication-line-index="${index}" inputmode="decimal" value="${escapeHtml(line.weightKg || "")}" placeholder="кг">
+          <input name="lengthCm" data-marketplace-publication-line-index="${index}" inputmode="decimal" value="${escapeHtml(line.lengthCm || "")}" placeholder="довжина см">
+          <input name="widthCm" data-marketplace-publication-line-index="${index}" inputmode="decimal" value="${escapeHtml(line.widthCm || "")}" placeholder="ширина см">
+          <input name="heightCm" data-marketplace-publication-line-index="${index}" inputmode="decimal" value="${escapeHtml(line.heightCm || "")}" placeholder="висота см">
+          <input name="cargoPlaces" data-marketplace-publication-line-index="${index}" type="number" min="1" value="${escapeHtml(line.cargoPlaces || 1)}" placeholder="місць">
+        </div>
+      </td>
       <td><input name="price" data-marketplace-publication-line-index="${index}" inputmode="decimal" value="${escapeHtml(line.price ?? 0)}"></td>
       <td><select name="currency" data-marketplace-publication-line-index="${index}">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === (line.currency || "UAH"))).join("")}</select></td>
       <td><select name="manager" data-marketplace-publication-line-index="${index}">${employeeOptions(line.manager || state.currentManager)}</select></td>
@@ -5865,10 +11935,223 @@ function collectMarketplacePublicationLinesFromForm(form) {
     sku: row.querySelector('[name="sku"]')?.value || "",
     externalId: row.querySelector('[name="externalId"]')?.value || "",
     title: row.querySelector('[name="title"]')?.value || "",
+    categoryName: row.querySelector('[name="categoryName"]')?.value || "",
+    categoryId: row.querySelector('[name="categoryId"]')?.value || "",
+    groupParam: row.querySelector('[name="groupParam"]')?.value || "",
+    filter1Name: row.querySelector('[name="filter1Name"]')?.value || "",
+    filter1Value: row.querySelector('[name="filter1Value"]')?.value || "",
+    filter2Name: row.querySelector('[name="filter2Name"]')?.value || "",
+    filter2Value: row.querySelector('[name="filter2Value"]')?.value || "",
+    filter3Name: row.querySelector('[name="filter3Name"]')?.value || "",
+    filter3Value: row.querySelector('[name="filter3Value"]')?.value || "",
+    weightKg: row.querySelector('[name="weightKg"]')?.value || "",
+    lengthCm: row.querySelector('[name="lengthCm"]')?.value || "",
+    widthCm: row.querySelector('[name="widthCm"]')?.value || "",
+    heightCm: row.querySelector('[name="heightCm"]')?.value || "",
+    cargoPlaces: row.querySelector('[name="cargoPlaces"]')?.value || "1",
     price: normalizeDecimalText(row.querySelector('[name="price"]')?.value || 0),
     currency: row.querySelector('[name="currency"]')?.value || "UAH",
     manager: row.querySelector('[name="manager"]')?.value || state.currentManager
   })).filter((line) => line.productId || line.sku || line.title);
+}
+
+function publicationFiltersFromLine(line) {
+  return [1, 2, 3].map((index) => ({
+    name: String(line[`filter${index}Name`] || "").trim(),
+    value: String(line[`filter${index}Value`] || "").trim()
+  })).filter((item) => item.name && item.value);
+}
+
+function publicationLogisticsFromLine(line) {
+  return {
+    weightKg: parseDecimal(line.weightKg, 0),
+    lengthCm: parseDecimal(line.lengthCm, 0),
+    widthCm: parseDecimal(line.widthCm, 0),
+    heightCm: parseDecimal(line.heightCm, 0),
+    cargoPlaces: Math.max(1, Number(line.cargoPlaces || 1))
+  };
+}
+
+function validateMarketplacePublicationRequirements(line, rowNumber) {
+  if (!String(line.categoryName || line.categoryId || "").trim()) {
+    throw new Error(`Рядок ${rowNumber}: вкажіть категорію маркетплейсу або ID категорії.`);
+  }
+  const filters = publicationFiltersFromLine(line);
+  if (filters.length < 3) {
+    throw new Error(`Рядок ${rowNumber}: потрібно мінімум 3 характеристики/фільтри категорії.`);
+  }
+  const overLimit = filters.find((item) => item.value.length > 500);
+  if (overLimit) {
+    throw new Error(`Рядок ${rowNumber}: значення характеристики "${overLimit.name}" довше 500 символів.`);
+  }
+  return filters;
+}
+
+function publicationMarketplaceRequirementsSummary(publication) {
+  const category = publication.category?.name || publication.categoryName || publication.category?.id || publication.categoryId || "-";
+  const filters = Array.isArray(publication.filters) ? publication.filters : [];
+  const filterText = filters.length
+    ? filters.slice(0, 3).map((item) => `${escapeHtml(item.name)}: ${escapeHtml(item.value)}`).join("<br>")
+    : '<span class="muted">фільтри не внесені</span>';
+  return `<strong>${escapeHtml(category)}</strong><br><span class="small muted">${filterText}</span>`;
+}
+
+function publicationLinkedProduct(publication) {
+  return byId(state.products, publication.productId);
+}
+
+function addPublicationIssue(list, key, label, level = "warn") {
+  if (!list.some((item) => item.key === key)) list.push({ key, label, level });
+}
+
+function marketplacePublicationMissingFields(publication) {
+  const product = publicationLinkedProduct(publication);
+  const category = publication.category || {};
+  const filters = Array.isArray(publication.filters) ? publication.filters : [];
+  const logistics = publication.logistics || {};
+  const issues = [];
+  if (!String(publication.marketplace || "").trim()) addPublicationIssue(issues, "marketplace", "маркетплейс", "danger");
+  if (!publication.productId || !product) addPublicationIssue(issues, "productId", "товар CRM", "danger");
+  if (!String(publication.sku || "").trim()) addPublicationIssue(issues, "sku", "SKU каналу", "danger");
+  if (!String(publication.title || "").trim()) addPublicationIssue(issues, "title", "назва публікації", "danger");
+  if (!String(category.name || category.id || publication.categoryName || publication.categoryId || "").trim()) addPublicationIssue(issues, "category", "категорія маркетплейсу", "danger");
+  if (filters.length < 3) addPublicationIssue(issues, "filters", "мінімум 3 фільтри / характеристики", "danger");
+  filters.forEach((item, index) => {
+    if (!String(item.name || "").trim() || !String(item.value || "").trim()) addPublicationIssue(issues, `filter:${index}`, `фільтр ${index + 1}`, "danger");
+    if (String(item.value || "").length > 500) addPublicationIssue(issues, `filter:${index}:limit`, `фільтр ${index + 1} довший 500 символів`, "danger");
+  });
+  if (!Number(publication.price || 0)) addPublicationIssue(issues, "price", "ціна", "danger");
+  if (!String(publication.currency || "").trim()) addPublicationIssue(issues, "currency", "валюта", "warn");
+  if ((publication.photosStatus || (product?.photos?.length ? "ok" : "missing")) !== "ok") addPublicationIssue(issues, "photos", "фото товару", "danger");
+  if (!String(publication.externalId || "").trim()) addPublicationIssue(issues, "externalId", "зовнішній ID / ID джерела", "warn");
+  if (!String(publication.manager || "").trim()) addPublicationIssue(issues, "manager", "відповідальний", "warn");
+  if (product && !String(product.description || "").trim()) addPublicationIssue(issues, "description", "опис товару", "warn");
+  if (product && !String(product.brand || "").trim()) addPublicationIssue(issues, "brand", "бренд", "warn");
+  if (product && !String(product.model || "").trim()) addPublicationIssue(issues, "model", "модель", "warn");
+  if (Number(publication.stockQty ?? productAvailableQty(publication.productId)) <= 0) addPublicationIssue(issues, "stockQty", "залишок для продажу", "warn");
+  if (!Number(logistics.weightKg || 0)) addPublicationIssue(issues, "weightKg", "вага", "warn");
+  if (!Number(logistics.lengthCm || 0) || !Number(logistics.widthCm || 0) || !Number(logistics.heightCm || 0)) addPublicationIssue(issues, "dimensions", "габарити пакування", "warn");
+  return issues;
+}
+
+function marketplacePublicationReadiness(publication) {
+  const issues = marketplacePublicationMissingFields(publication);
+  const danger = issues.filter((issue) => issue.level === "danger");
+  const warn = issues.filter((issue) => issue.level !== "danger");
+  if (danger.length) return { issues, danger, warn, label: "не готова", className: "danger" };
+  if (warn.length) return { issues, danger, warn, label: "перевірити", className: "warn" };
+  if (publication.status === "published") return { issues, danger, warn, label: "опубліковано", className: "good" };
+  return { issues, danger, warn, label: "готова до обміну", className: "good" };
+}
+
+function syncPublicationReadinessFields(publication) {
+  const readiness = marketplacePublicationReadiness(publication);
+  publication.validation = readiness.issues.map(({ key, label, level }) => ({ key, label, level }));
+  publication.readiness = readiness.label;
+  return publication;
+}
+
+function renderPublicationIssueCompact(publication) {
+  const readiness = marketplacePublicationReadiness(publication);
+  if (!readiness.issues.length) return `<span class="pill ${readiness.className}">${escapeHtml(readiness.label)}</span>`;
+  return `<span class="pill ${readiness.className}">${readiness.issues.length} не виконано</span>`;
+}
+
+function renderPublicationIssueSummary(publication) {
+  const readiness = marketplacePublicationReadiness(publication);
+  if (!readiness.issues.length) return '<p class="notice good small full">Публікація готова: критичні поля маркетплейсу заповнені.</p>';
+  return `
+    <div class="order-issues notice ${readiness.danger.length ? "danger" : "warn"} full">
+      <strong>Потрібно доповнити перед виставленням</strong>
+      <div class="issue-pill-list">
+        ${readiness.danger.map((issue) => `<span class="pill danger">${escapeHtml(issue.label)}</span>`).join("")}
+        ${readiness.warn.map((issue) => `<span class="pill warn">${escapeHtml(issue.label)}</span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function publicationFieldClass(issues, keys, base = "field") {
+  const level = missingIssueLevel(issues, keys);
+  return level ? `${base} field-missing ${level}` : base;
+}
+
+function renderMarketplacePublicationControl() {
+  const rows = state.marketplacePublications.map((publication) => {
+    const readiness = marketplacePublicationReadiness(publication);
+    return { publication, readiness };
+  });
+  const needsAttention = rows.filter(({ publication, readiness }) => readiness.issues.length || publication.status !== "published");
+  const blockers = rows.filter(({ readiness }) => readiness.danger.length).length;
+  const warnings = rows.filter(({ readiness }) => !readiness.danger.length && readiness.warn.length).length;
+  const ready = rows.filter(({ publication, readiness }) => !readiness.issues.length && publication.status !== "published").length;
+  const published = rows.filter(({ publication, readiness }) => !readiness.issues.length && publication.status === "published").length;
+  return `
+    <section class="panel section-band">
+      <div class="split">
+        <h2>Контроль виставлення товарів</h2>
+        <span class="pill ${blockers ? "danger" : warnings ? "warn" : "good"}">${needsAttention.length} потребують уваги</span>
+      </div>
+      <div class="grid four">
+        <article class="card metric danger"><span>Блокери</span><strong>${blockers}</strong><small>Без цих полів публікацію не відправляємо.</small></article>
+        <article class="card metric warn"><span>Попередження</span><strong>${warnings}</strong><small>Можна готувати, але треба перевірити.</small></article>
+        <article class="card metric good"><span>Готові</span><strong>${ready}</strong><small>Чекають синхронізації.</small></article>
+        <article class="card metric info"><span>Опубліковані</span><strong>${published}</strong><small>Останній стан у CRM.</small></article>
+      </div>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead><tr><th>Публікація</th><th>Товар</th><th>Готовність</th><th>Обмін</th><th>Що виправити</th></tr></thead>
+          <tbody>
+            ${needsAttention.slice(0, 12).map(({ publication, readiness }) => `
+              <tr class="clickable-row ${readiness.issues.length ? "row-has-issues" : ""}" data-edit-publication="${escapeHtml(publication.id)}" title="Відкрити публікацію">
+                <td><strong>${escapeHtml(publication.marketplace || "-")} · ${escapeHtml(publication.sku || "-")}</strong><br><span class="small muted">${escapeHtml(publication.externalId || "-")}</span></td>
+                <td>${escapeHtml(productName(publication.productId))}</td>
+                <td><span class="pill ${readiness.className}">${escapeHtml(readiness.label)}</span></td>
+                <td>${statusPill(publication.status)}<br><span class="small muted">${escapeHtml(publication.lastSync || "ще не синхронізовано")}</span></td>
+                <td><div class="issue-pill-list">${readiness.issues.slice(0, 5).map((issue) => `<span class="pill ${issue.level === "danger" ? "danger" : "warn"}">${escapeHtml(issue.label)}</span>`).join("") || '<span class="pill good">можна синхронізувати</span>'}</div></td>
+              </tr>
+            `).join("") || '<tr><td colspan="5" class="muted">Критичних проблем у публікаціях немає.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderMarketplacePublicationCreateForm() {
+  const names = marketplaceNames();
+  const lines = marketplacePublicationDraftLines();
+  return `
+    <form class="stack" data-action="create-marketplace-publication">
+      <div class="split">
+        <h3>Створити публікацію</h3>
+        <button class="secondary" type="button" data-add-marketplace-publication-line>Додати ще</button>
+      </div>
+      <p class="notice small">Для модерації маркетплейсів заповнюйте категорію, ID категорії за наявності, мінімум 3 фільтри/характеристики, параметр групування та габарити упаковки. CRM збере ці поля в картку публікації перед синхронізацією.</p>
+      <div class="table-wrap invoice-lines">
+        <table>
+          <thead><tr><th>Маркетплейс</th><th>Товар</th><th>SKU каналу</th><th>Зовн. ID</th><th>Назва публікації</th><th>Категорія / фільтри</th><th>Логістика</th><th>Ціна</th><th>Валюта</th><th>Менеджер</th><th>Дії</th></tr></thead>
+          <tbody>${lines.map((line, index) => renderMarketplacePublicationLine(line, index, names)).join("")}</tbody>
+        </table>
+      </div>
+      <button class="primary" type="submit">Створити публікацію</button>
+    </form>
+  `;
+}
+
+function refreshMarketplacePublicationModal(form) {
+  const modal = form?.closest(".modal-backdrop");
+  if (!modal) return false;
+  const body = $(".modal-body", modal);
+  if (!body) return false;
+  body.innerHTML = renderMarketplacePublicationCreateForm();
+  prepareDecimalInputs(modal);
+  applyRoleFieldLocks(modal);
+  return true;
+}
+
+function openCreateMarketplacePublicationForm() {
+  openModal("Створити публікацію", renderMarketplacePublicationCreateForm());
 }
 
 function updateMarketplacePublicationDraftFromForm(form) {
@@ -5880,7 +12163,55 @@ function updateMarketplacePublicationDraftFromForm(form) {
 
 function rozetkaInboundState() {
   if (!state.rozetkaInbound) state.rozetkaInbound = clone(seedState.rozetkaInbound);
+  state.rozetkaInbound.progress = {
+    ...clone(seedState.rozetkaInbound.progress),
+    ...(state.rozetkaInbound.progress || {})
+  };
   return state.rozetkaInbound;
+}
+
+function rozetkaProgressState() {
+  return rozetkaInboundState().progress;
+}
+
+function rozetkaErrorCode(error) {
+  if (error?.code) return String(error.code);
+  const message = String(error?.message || "");
+  const match = message.match(/\bHTTP\s*(\d{3})\b|\bstatus\s*(\d{3})\b|\bcode[:\s]+([A-Z0-9_-]+)\b/i);
+  return match ? (match[1] || match[2] || match[3]) : "CRM_IMPORT_ERROR";
+}
+
+function setRozetkaProgress(status, percent, stage, message = "", code = "") {
+  const progress = rozetkaProgressState();
+  progress.status = status;
+  progress.percent = Math.max(0, Math.min(100, Number(percent || 0)));
+  progress.stage = stage;
+  progress.message = message;
+  progress.code = code || "";
+  progress.updatedAt = currentTimestamp();
+  paintRozetkaProgress();
+}
+
+function paintRozetkaProgress(root = document) {
+  const progress = rozetkaProgressState();
+  const frame = root.querySelector?.("[data-rozetka-progress]");
+  if (!frame) return;
+  frame.dataset.progressStatus = progress.status || "idle";
+  const bar = frame.querySelector("[data-rozetka-progress-bar]");
+  if (bar) bar.style.width = `${progress.percent || 0}%`;
+  const percent = frame.querySelector("[data-rozetka-progress-percent]");
+  if (percent) percent.textContent = `${progress.percent || 0}%`;
+  const status = frame.querySelector("[data-rozetka-progress-status]");
+  if (status) {
+    status.textContent = progress.status === "success" ? "OK" : progress.status === "error" ? `Помилка ${progress.code || ""}`.trim() : progress.status === "running" ? "В процесі" : "Очікує";
+    status.className = `pill ${progress.status === "success" ? "good" : progress.status === "error" ? "danger" : progress.status === "running" ? "warn" : "info"}`;
+  }
+  const stage = frame.querySelector("[data-rozetka-progress-stage]");
+  if (stage) stage.textContent = progress.stage || "";
+  const message = frame.querySelector("[data-rozetka-progress-message]");
+  if (message) message.textContent = progress.message || "";
+  const updated = frame.querySelector("[data-rozetka-progress-updated]");
+  if (updated) updated.textContent = progress.updatedAt || "";
 }
 
 function queryFromForm(form, keys) {
@@ -5897,12 +12228,19 @@ function queryFromForm(form, keys) {
 
 async function fetchRozetkaInbound(form, path, keys) {
   const params = queryFromForm(form, keys);
+  return fetchRozetkaInboundParams(path, params);
+}
+
+async function fetchRozetkaInboundParams(path, params = new URLSearchParams()) {
   const response = await fetch(`${path}${params.toString() ? `?${params.toString()}` : ""}`, {
     headers: { Accept: "application/json" }
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.success === false || payload.ok === false) {
-    throw new Error(payload.error || payload?.errors?.message || `HTTP ${response.status}`);
+    const error = new Error(payload.error || payload?.errors?.message || `HTTP ${response.status}`);
+    error.code = payload.code || payload?.errors?.code || response.status;
+    error.details = payload;
+    throw error;
   }
   return payload;
 }
@@ -5918,6 +12256,25 @@ function rozetkaOrders(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.content?.orders)) return payload.content.orders;
   if (Array.isArray(payload?.orders)) return payload.orders;
+  return [];
+}
+
+function rozetkaChats(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.content?.chats)) return payload.content.chats;
+  if (Array.isArray(payload?.content?.items)) return payload.content.items;
+  if (Array.isArray(payload?.content?.messages)) return payload.content.messages;
+  if (Array.isArray(payload?.chats)) return payload.chats;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+}
+
+function rozetkaCalls(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.content?.calls)) return payload.content.calls;
+  if (Array.isArray(payload?.content?.items)) return payload.content.items;
+  if (Array.isArray(payload?.requests)) return payload.requests;
+  if (Array.isArray(payload?.items)) return payload.items;
   return [];
 }
 
@@ -5945,8 +12302,64 @@ function rozetkaCategoryName(item) {
   return item?.price_category?.title_ua || item?.price_category?.title || item?.rz_category?.title_ua || item?.rz_category?.title || item?.catalog_category?.name_ua || item?.catalog_category?.name || "Rozetka";
 }
 
+function cleanImportedSourceBrand(value) {
+  const brand = String(value || "").trim();
+  const normalized = brand.toLowerCase();
+  return ["1c", "1с", "1с", "onec", "rozetka", "розетка", "prom", "пром"].includes(normalized) ? "" : brand;
+}
+
+function cleanImportedProductName(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const cleaned = text
+    .replace(/^(1c|1с|onec|rozetka|розетка|prom|пром)\s*[·:—\-–|/]*\s*/i, "")
+    .trim();
+  return cleaned || text;
+}
+
 function rozetkaBrandName(item) {
-  return item?.price_producer_name || item?.rz_producer?.title || item?.sync_source_producer?.title || "Rozetka";
+  return cleanImportedSourceBrand(item?.price_producer_name || item?.rz_producer?.title || item?.sync_source_producer?.title || "");
+}
+
+function compactRozetkaObject(source, fields) {
+  const compact = {};
+  fields.forEach((field) => {
+    const value = source?.[field];
+    if (value !== undefined && value !== null && value !== "") compact[field] = value;
+  });
+  return compact;
+}
+
+function compactRozetkaProductRaw(item) {
+  return {
+    ...compactRozetkaObject(item, [
+      "id", "rz_item_id", "item_id", "price_offer_id", "market_id", "sync_source_id", "article",
+      "name", "name_ua", "name_ru", "price", "price_old", "price_promo", "stock_quantity",
+      "available", "available_title", "upload_status", "upload_status_title", "item_active",
+      "rz_sell_status", "catalog_id", "duplicate_mark", "created_at", "updated_at", "url"
+    ]),
+    category: rozetkaCategoryName(item),
+    producer: rozetkaBrandName(item),
+    photos: [...new Set([...(Array.isArray(item?.photo) ? item.photo : []), ...(Array.isArray(item?.photo_preview) ? item.photo_preview : [item?.photo_preview])].filter(Boolean))].slice(0, 12)
+  };
+}
+
+function compactRozetkaOrderRaw(order) {
+  const purchases = Array.isArray(order?.purchases) ? order.purchases : Array.isArray(order?.items) ? order.items : [];
+  return {
+    ...compactRozetkaObject(order, [
+      "id", "external_id", "created", "created_at", "updated_at", "status", "status_group",
+      "amount", "amount_with_discount", "cost", "cost_with_discount", "user_title",
+      "user_phone", "recipient_phone", "comment", "ttn", "delivery_service"
+    ]),
+    status_title: order?.status_data?.title || order?.status_title || "",
+    user: order?.user ? compactRozetkaObject(order.user, ["id", "name", "title", "contact_fio", "phone", "email"]) : undefined,
+    delivery: order?.delivery ? compactRozetkaObject(order.delivery, ["type", "name", "city", "warehouse", "recipient_name", "recipient_phone", "ttn", "email"]) : undefined,
+    payment: order?.payment ? compactRozetkaObject(order.payment, ["type", "name", "status", "amount"]) : undefined,
+    purchases: purchases.slice(0, 30).map((purchase) => compactRozetkaObject(purchase, [
+      "id", "item_id", "name", "name_ua", "article", "price", "quantity", "count", "amount", "cost"
+    ]))
+  };
 }
 
 function findProductForRozetkaGoods(item) {
@@ -6006,20 +12419,22 @@ function upsertRozetkaProduct(item) {
       duplicate_mark: item.duplicate_mark ?? null,
     category,
     producer: brand,
-    raw: item
+    raw: compactRozetkaProductRaw(item)
   };
 
   if (existing) {
     existing.marketplaceSku = marketplaceSku || existing.marketplaceSku;
     existing.supplierSku = sku || existing.supplierSku;
-    existing.price = price || existing.price;
     existing.currency = "UAH";
+    applyImportedProductPrice(existing, price, "UAH");
     existing.category = existing.rozetka ? category : existing.category || category;
-    existing.brand = existing.rozetka ? brand : existing.brand || brand;
+    existing.brand = existing.rozetka ? brand : cleanImportedSourceBrand(existing.brand || brand);
       existing.model = existing.rozetka ? name : existing.model || name;
       existing.description = description || existing.description || "";
       if (photos.length) existing.photos = photos;
       existing.rozetka = rozetka;
+    addLinkedRequisiteValue(existing, "product", "skus", sku || marketplaceSku);
+    normalizeProductRequisites(existing);
     return { product: existing, mode: "updated" };
   }
 
@@ -6048,6 +12463,8 @@ function upsertRozetkaProduct(item) {
     photos,
     rozetka
   };
+  applyImportedProductPrice(product, price, "UAH");
+  normalizeProductRequisites(product);
   state.products.unshift(product);
   return { product, mode: "created" };
 }
@@ -6055,6 +12472,7 @@ function upsertRozetkaProduct(item) {
 function upsertRozetkaPublication(item, product) {
   const sku = String(item.price_offer_id || item.article || item.item_id || item.id || product.marketplaceSku || product.supplierSku || "").trim();
   const externalId = String(item.rz_item_id || item.item_id || item.id || sku).trim();
+  addLinkedRequisiteValue(product, "product", "skus", sku);
   const existing = state.marketplacePublications.find((publication) => publication.marketplace === "Rozetka" && (
     (externalId && publication.externalId === externalId) || (sku && publication.sku === sku)
   ));
@@ -6167,9 +12585,41 @@ function marketplaceOrderBuyer(order) {
   return buyer;
 }
 
+function findClientByBuyer(buyer = {}, manager = "") {
+  return state.clients.find((client) => buyer.phone && linkedRequisiteIncludes(client, "client", "phones", buyer.phone))
+    || state.clients.find((client) => buyer.email && linkedRequisiteIncludes(client, "client", "emails", buyer.email))
+    || state.clients.find((client) => buyer.edrpou && linkedRequisiteIncludes(client, "client", "edrpous", buyer.edrpou))
+    || state.clients.find((client) => buyer.address && linkedRequisiteIncludes(client, "client", "addresses", buyer.address) && normalizedText(client.name) === normalizedText(buyer.name))
+    || state.clients.find((client) => buyer.name && normalizedText(client.name) === normalizedText(buyer.name) && (!manager || client.manager === manager));
+}
+
+function marketplaceOrderLinkedClient(order = {}) {
+  return byId(state.clients, order.clientId) || findClientByBuyer(marketplaceOrderBuyer(order), order.manager);
+}
+
+function attachBuyerRequisitesToClient(client, buyer = {}) {
+  if (!client) return;
+  addLinkedRequisiteValue(client, "client", "phones", buyer.phone);
+  addLinkedRequisiteValue(client, "client", "emails", buyer.email);
+  addLinkedRequisiteValue(client, "client", "edrpous", buyer.edrpou);
+  addLinkedRequisiteValue(client, "client", "addresses", buyer.address);
+  normalizeClientRequisites(client);
+}
+
 function rozetkaOrderCrmStatus(order) {
+  const statusText = String([
+    order.status,
+    order.status_name,
+    order.status_title,
+    order.status_data?.name,
+    order.status_data?.title,
+    order.last_update_status
+  ].filter(Boolean).join(" ")).toLowerCase();
+  if (/cancel|скас|отмен|declin|reject/.test(statusText)) return "cancelled";
   if (Number(order.status_group) === 2) return "delivered";
-  if (order.ttn || order.delivery?.ttn || order.carrier?.carrier_track_num) return "sent_to_delivery";
+  if (order.ttn || order.delivery?.ttn || order.carrier?.carrier_track_num) return "shipped";
+  if (rozetkaOrderPaymentStatus(order) === "paid") return "paid";
+  if (/confirm|підтвер|подтверж|approved/.test(statusText)) return "confirmed_by_client";
   return "new_order";
 }
 
@@ -6239,15 +12689,174 @@ function upsertRozetkaOrder(order) {
       status_group: order.status_group,
       status_title: order.status_data?.title || "",
       purchases,
-      raw: order
+      raw: compactRozetkaOrderRaw(order)
     }
   });
 
   if (existing) {
     Object.assign(existing, payload, { id: existing.id, clientId: existing.clientId || payload.clientId, invoiceId: existing.invoiceId || payload.invoiceId });
+    runMarketplaceOrderAutomation(existing, { audit: false });
     return "updated";
   }
   state.marketplaceOrders.unshift(payload);
+  runMarketplaceOrderAutomation(payload, { audit: true });
+  return "created";
+}
+
+function findRozetkaMarketplaceOrder(apiOrderId = "") {
+  const value = String(apiOrderId || "").trim();
+  if (!value) return null;
+  return state.marketplaceOrders.find((order) => (
+    order.marketplace === "Rozetka"
+    && (String(order.rozetka?.id || "") === value || order.externalOrderId === `RZ-${value}` || order.externalOrderId === value)
+  )) || null;
+}
+
+function rozetkaChatMessageText(chat) {
+  const messages = Array.isArray(chat.messages) ? chat.messages : Array.isArray(chat.chat_messages) ? chat.chat_messages : [];
+  const lastMessage = messages[messages.length - 1] || chat.last_message || {};
+  return textFromHtml(lastMessage.body || lastMessage.message || chat.message || chat.subject || "");
+}
+
+function mapRozetkaChatToCustomerQuestion(chat, source = "orders") {
+  const orderApiId = chat.order_id || chat.order?.id || chat.order?.order_id || "";
+  const order = findRozetkaMarketplaceOrder(orderApiId);
+  const user = chat.user || {};
+  const sourceType = source === "items" || (!orderApiId && Number(chat.type) !== 0) ? "seller_question" : "order_question";
+  const externalId = `chat-${chat.id || chat.chat_id || chat.thread_id || orderApiId || Date.now()}`;
+  return {
+    id: externalId,
+    marketplace: "Rozetka",
+    sourceType,
+    externalId,
+    chatId: String(chat.id || chat.chat_id || ""),
+    receiverId: String(chat.user_id || user.id || chat.receiver_id || ""),
+    orderId: order?.id || "",
+    externalOrderId: order?.externalOrderId || (orderApiId ? `RZ-${orderApiId}` : ""),
+    buyerName: chat.user_fio || user.contact_fio || user.login || chat.user_login || "Покупець Rozetka",
+    buyerContact: user.phone || user.email || chat.user_phone || chat.user_email || "",
+    subject: chat.subject || marketplaceCustomerQuestionTypeLabel(sourceType),
+    message: rozetkaChatMessageText(chat),
+    status: chat.read_market ? "waiting_customer" : "new",
+    priority: chat.star_market ? "high" : "normal",
+    createdAt: chat.created || today,
+    updatedAt: chat.updated || chat.created || currentTimestamp(),
+    manager: order?.manager || state.currentManager,
+    answer: "",
+    answeredAt: "",
+    apiStatus: "отримано з /messages/search",
+    raw: chat
+  };
+}
+
+function rozetkaCallStatus(statusId) {
+  const map = {
+    1: "new",
+    2: "open",
+    3: "waiting_marketplace",
+    4: "answered",
+    5: "closed"
+  };
+  return map[Number(statusId)] || "open";
+}
+
+function rozetkaCallTypeLabel(typeId) {
+  const map = {
+    1: "Звернення в Call Center",
+    2: "Уточнення доставки",
+    3: "Скасування замовлення",
+    4: "Скарга",
+    5: "Заявка на повернення",
+    6: "Корекція інформації на сайті",
+    7: "Питання оплати"
+  };
+  return map[Number(typeId)] || "Звернення в Call Center";
+}
+
+function mapRozetkaCallToCustomerQuestion(call) {
+  const order = findRozetkaMarketplaceOrder(call.order_id);
+  const sourceType = Number(call.request_type) === 5 ? "return_request" : "call_center";
+  const externalId = `call-${call.id || call.request_id || Date.now()}`;
+  return {
+    id: externalId,
+    marketplace: "Rozetka",
+    sourceType,
+    externalId,
+    requestId: String(call.id || call.request_id || ""),
+    orderId: order?.id || "",
+    externalOrderId: order?.externalOrderId || (call.order_id ? `RZ-${call.order_id}` : ""),
+    buyerName: call.user_login || "Покупець Rozetka",
+    buyerContact: call.user_phone || "",
+    subject: call.request_type_name || rozetkaCallTypeLabel(call.request_type),
+    message: call.message || call.comment || "",
+    status: rozetkaCallStatus(call.status_id),
+    priority: Number(call.request_type) === 4 || Number(call.request_type) === 5 ? "high" : "normal",
+    createdAt: call.date_call || call.created || today,
+    updatedAt: call.updated || call.date_call || currentTimestamp(),
+    manager: order?.manager || state.currentManager,
+    answer: "",
+    answeredAt: "",
+    apiStatus: "отримано з /calls/search",
+    raw: call
+  };
+}
+
+function mapRozetkaCallToServiceThread(call) {
+  const externalId = `support-${call.id || call.request_id || Date.now()}`;
+  return {
+    id: externalId,
+    marketplace: "Rozetka",
+    sourceType: "marketplace_thread",
+    externalId,
+    requestId: String(call.id || call.request_id || ""),
+    subject: call.request_type_name || rozetkaCallTypeLabel(call.request_type),
+    message: call.message || call.comment || "",
+    status: rozetkaCallStatus(call.status_id),
+    createdAt: call.date_call || call.created || today,
+    updatedAt: call.updated || call.date_call || currentTimestamp(),
+    manager: state.currentManager,
+    answer: "",
+    answeredAt: "",
+    apiStatus: "отримано з /calls/search",
+    raw: call
+  };
+}
+
+function upsertMarketplaceCustomerQuestion(question) {
+  state.marketplaceCustomerQuestions = Array.isArray(state.marketplaceCustomerQuestions) ? state.marketplaceCustomerQuestions : [];
+  const existing = state.marketplaceCustomerQuestions.find((item) => (
+    item.marketplace === question.marketplace
+    && (item.externalId === question.externalId || (question.chatId && item.chatId === question.chatId) || (question.requestId && item.requestId === question.requestId))
+  ));
+  if (existing) {
+    Object.assign(existing, question, {
+      id: existing.id,
+      answer: existing.answer || question.answer || "",
+      answeredAt: existing.answeredAt || question.answeredAt || "",
+      status: existing.answer ? existing.status : question.status
+    });
+    return "updated";
+  }
+  state.marketplaceCustomerQuestions.unshift(question);
+  return "created";
+}
+
+function upsertMarketplaceServiceThread(thread) {
+  state.marketplaceServiceThreads = Array.isArray(state.marketplaceServiceThreads) ? state.marketplaceServiceThreads : [];
+  const existing = state.marketplaceServiceThreads.find((item) => (
+    item.marketplace === thread.marketplace
+    && (item.externalId === thread.externalId || (thread.requestId && item.requestId === thread.requestId))
+  ));
+  if (existing) {
+    Object.assign(existing, thread, {
+      id: existing.id,
+      answer: existing.answer || thread.answer || "",
+      answeredAt: existing.answeredAt || thread.answeredAt || "",
+      status: existing.answer ? existing.status : thread.status
+    });
+    return "updated";
+  }
+  state.marketplaceServiceThreads.unshift(thread);
   return "created";
 }
 
@@ -6264,20 +12873,73 @@ function finalizeRozetkaImport() {
   markRozetkaIntegration("ok");
 }
 
-function renderRozetkaInboundPanel() {
-  const settings = rozetkaInboundState();
+function rozetkaExternalKey(collection, row, index) {
+  if (collection === "goods") {
+    return `goods:${row?.rz_item_id || row?.item_id || row?.id || row?.price_offer_id || row?.article || index}`;
+  }
+  if (collection === "orders") {
+    return `orders:${row?.id || row?.order_id || row?.externalOrderId || index}`;
+  }
+  if (collection === "questions") {
+    return `questions:${row?.id || row?.externalId || row?.chatId || row?.callId || index}`;
+  }
+  if (collection === "threads") {
+    return `threads:${row?.id || row?.externalId || row?.callId || index}`;
+  }
+  return `${collection}:${index}:${stableExternalStringify(row).slice(0, 80)}`;
+}
+
+function renderRozetkaProgress() {
+  const progress = rozetkaProgressState();
+  const statusText = progress.status === "success" ? "OK" : progress.status === "error" ? `Помилка ${progress.code || ""}`.trim() : progress.status === "running" ? "В процесі" : "Очікує";
+  const statusClass = progress.status === "success" ? "good" : progress.status === "error" ? "danger" : progress.status === "running" ? "warn" : "info";
   return `
-    <section class="panel section-band no-print" data-rozetka-inbound-panel>
-      <h2>Rozetka API · отримання товарів і замовлень</h2>
-      <div class="grid three">
-        <article class="card metric info"><span>Режим</span><strong>read-only</strong><small>CRM тільки отримує дані з Rozetka.</small></article>
-        <article class="card metric good"><span>Товари</span><strong>${settings.lastGoodsCount || 0}</strong><small>${escapeHtml(settings.lastGoodsSync || "ще не запускали")}</small></article>
-        <article class="card metric warn"><span>Замовлення</span><strong>${settings.lastOrdersCount || 0}</strong><small>${escapeHtml(settings.lastOrdersSync || "ще не запускали")}</small></article>
+    <div class="exchange-progress" data-rozetka-progress data-progress-status="${escapeHtml(progress.status || "idle")}">
+      <div class="split">
+        <h3>Шкала процесу Rozetka</h3>
+        <span class="pill ${statusClass}" data-rozetka-progress-status>${escapeHtml(statusText)}</span>
       </div>
+      <div class="progress-track" aria-label="Прогрес обміну Rozetka">
+        <div class="progress-bar" data-rozetka-progress-bar style="width:${Number(progress.percent || 0)}%"></div>
+      </div>
+      <div class="row-main small muted">
+        <span><strong data-rozetka-progress-percent>${Number(progress.percent || 0)}%</strong> · <span data-rozetka-progress-stage>${escapeHtml(progress.stage || "")}</span></span>
+        <span data-rozetka-progress-updated>${escapeHtml(progress.updatedAt || "")}</span>
+      </div>
+      <p class="small ${progress.status === "error" ? "notice danger" : "muted"}" data-rozetka-progress-message>${escapeHtml(progress.message || "")}</p>
+    </div>
+  `;
+}
+
+function renderRozetkaInboundPanel({ embedded = false } = {}) {
+  const settings = rozetkaInboundState();
+  const tag = embedded ? "div" : "section";
+  const title = embedded ? "<h3>Rozetka API → CRM</h3>" : "<h2>6.1 Обмін даними · Rozetka API → CRM</h2>";
+  return `
+    <${tag} class="${embedded ? "rozetka-embedded" : "panel section-band"} no-print" data-rozetka-inbound-panel>
+      ${title}
+      <div class="grid three">
+        <article class="card metric info"><span>Режим</span><strong>GET + reply</strong><small>Обмін завантажує дані; відповідь покупцю відправляється тільки вручну з форми питання.</small></article>
+        <article class="card metric good"><span>Товари / публікації</span><strong>${settings.lastGoodsCount || 0}</strong><small>${escapeHtml(settings.lastGoodsSync || "ще не запускали")}</small></article>
+        <article class="card metric warn"><span>Замовлення</span><strong>${settings.lastOrdersCount || 0}</strong><small>${escapeHtml(settings.lastOrdersSync || "ще не запускали")}</small></article>
+        <article class="card metric info"><span>Питання покупців</span><strong>${(state.marketplaceCustomerQuestions || []).length}</strong><small>${escapeHtml(settings.lastQuestionsSync || "ще не запускали")}</small></article>
+        <article class="card metric warn"><span>Переписка ROZETKA</span><strong>${(state.marketplaceServiceThreads || []).length}</strong><small>${escapeHtml(settings.lastThreadsSync || "ще не запускали")}</small></article>
+      </div>
+      ${renderRozetkaProgress()}
       ${settings.lastError ? `<p class="notice danger small">${escapeHtml(settings.lastError)}</p>` : ""}
-      <div class="grid two">
+      <p class="notice small">Для реальних даних заповніть <code>ROZETKA_API_TOKEN</code> або <code>ROZETKA_USERNAME</code> + <code>ROZETKA_PASSWORD</code> у файлі <code>.env</code>. GET-завантаження йде в CRM; відповіді покупцю через Rozetka API доступні з форми питання, якщо увімкнути відправку API.</p>
+      <details class="exchange-detail-drawer" data-rozetka-exchange-details>
+        <summary>
+          <span>Детальні параметри Rozetka API</span>
+          <small>форми для товарів, замовлень, питань клієнтів і звернень ROZETKA</small>
+        </summary>
+        <div class="grid two">
           <form class="api-box" data-action="rozetka-import-goods">
-            <h3>Товари Rozetka → каталог CRM</h3>
+            <h3>Товари та публікації Rozetka → CRM</h3>
+            <div class="inline-actions api-actions-top">
+              <button class="primary" type="submit">Отримати товари</button>
+              <button class="secondary" type="button" data-rozetka-import-fast-goods>Швидке оновлення товарів</button>
+            </div>
             <div class="form-grid">
               <label class="field"><span>Джерело</span><select name="source">${option("items", "усі активні товари", true)}${option("goods_new", "нові товари / goods_new")}</select></label>
               <label class="field"><span>Активність</span><select name="item_active">${option("1", "активні", true)}${option("0", "неактивні")}</select></label>
@@ -6287,30 +12949,83 @@ function renderRozetkaInboundPanel() {
               <label class="field"><span>Наявність</span><select name="available"><option value="">0 і 1</option>${option("1", "є в наявності")}${option("0", "немає")}</select></label>
               <label class="field"><span>Сторінка</span><input name="page" inputmode="numeric" value="1"></label>
               <label class="field"><span>Рядків goods_new</span><input name="pageSize" inputmode="numeric" value="100"></label>
-              <label class="field"><span>Макс. сторінок</span><input name="maxPages" inputmode="numeric" value="250"></label>
+              <label class="field"><span>Макс. сторінок</span><input name="maxPages" value="5" placeholder="5 або all"></label>
               <label class="field"><span>Сортування</span><select name="sort"><option value="">за замовчуванням</option>${ROZETKA_GOODS_SORT_OPTIONS.map((value) => option(value, value)).join("")}</select></label>
-            </div>
-          <button class="primary" type="submit">Отримати товари</button>
-          <p class="small muted">Картка товару + публікація Rozetka. Повний JSON зберігається у полі rozetka.raw.</p>
+          </div>
+          ${settings.lastGoodsSync ? `<p class="notice good small">Останнє завантаження товарів: ${escapeHtml(settings.lastGoodsSync)}, отримано ${settings.lastGoodsCount || 0} позицій.</p>` : ""}
+          <p class="small muted">CRM створює або оновлює картку товару та публікацію Rozetka. Для стабільного тесту в браузері зберігається компактний Rozetka JSON.</p>
         </form>
         <form class="api-box" data-action="rozetka-import-orders">
           <h3>Замовлення Rozetka → CRM</h3>
+          <div class="inline-actions api-actions-top">
+            <button class="primary" type="submit">Отримати замовлення</button>
+            <button class="secondary" type="button" data-rozetka-import-fast-orders>Швидке оновлення замовлень</button>
+          </div>
           <div class="form-grid">
             <label class="field"><span>Дата від</span><input name="created_from" type="date"></label>
             <label class="field"><span>Дата до</span><input name="created_to" type="date"></label>
             <label class="field"><span>Тип</span><select name="types"><option value="1">всі</option>${option("2", "в обробці")}${option("4", "нові")}${option("5", "доставляються")}${option("3", "успішні")}${option("6", "неуспішні")}</select></label>
             <label class="field"><span>Статус</span><input name="status" inputmode="numeric" placeholder="ID статусу"></label>
             <label class="field"><span>Сторінка</span><input name="page" inputmode="numeric" value="1"></label>
-            <label class="field"><span>Макс. сторінок</span><input name="maxPages" inputmode="numeric" value="1"></label>
-            <label class="field"><span>Деталей</span><input name="maxDetails" inputmode="numeric" value="20"></label>
+            <label class="field"><span>Макс. сторінок</span><input name="maxPages" value="1" placeholder="1 або all"></label>
+            <label class="field"><span>Деталей</span><input name="maxDetails" value="20" placeholder="20 або all"></label>
             <label class="field"><span>Сортування</span><select name="sort">${ROZETKA_ORDER_SORT_OPTIONS.map((value) => option(value, value, value === "-id")).join("")}</select></label>
           </div>
-          <button class="primary" type="submit">Отримати замовлення</button>
-          <p class="small muted">Після /orders/search CRM підтягує /orders/{id}; повний JSON зберігається у order.rozetka.raw.</p>
+          ${settings.lastOrdersSync ? `<p class="notice good small">Останнє завантаження замовлень: ${escapeHtml(settings.lastOrdersSync)}, отримано ${settings.lastOrdersCount || 0} замовлень.</p>` : ""}
+          <p class="small muted">Після /orders/search CRM підтягує /orders/{id}; для стабільного тесту в браузері зберігається компактний Rozetka JSON.</p>
         </form>
-      </div>
-    </section>
+        <form class="api-box" data-action="rozetka-import-customer-questions">
+          <h3>Переписка з клієнтами Rozetka → CRM</h3>
+          <div class="inline-actions api-actions-top">
+            <button class="primary" type="submit">Отримати питання</button>
+          </div>
+          <div class="form-grid">
+            <label class="field"><span>Блок</span><select name="source">${option("orders", "Питання про замовлення", true)}${option("items", "Запитання продавцю")}${option("calls", "Call Center / повернення")}${option("all", "orders + items")}</select></label>
+            <label class="field"><span>Прочитано</span><select name="read"><option value="">усі</option>${option("0", "непрочитані")}${option("1", "прочитані")}</select></label>
+            <label class="field"><span>Пошук</span><input name="search" placeholder="номер, клієнт, товар"></label>
+            <label class="field"><span>Сторінка</span><input name="page" inputmode="numeric" value="1"></label>
+            <label class="field"><span>Макс. сторінок</span><input name="maxPages" value="3" placeholder="3 або all"></label>
+            <label class="field"><span>Сортування</span><select name="sort">${option("-updated", "оновлені ↓", true)}${option("updated", "оновлені ↑")}${option("-created", "створені ↓")}${option("created", "створені ↑")}</select></label>
+          </div>
+          ${settings.lastQuestionsSync ? `<p class="notice good small">Останнє завантаження питань: ${escapeHtml(settings.lastQuestionsSync)}, отримано ${settings.lastQuestionsCount || 0} рядків.</p>` : ""}
+          <p class="small muted">Питання про замовлення і запитання продавцю беруться з /messages/search; звернення Call Center і повернення — з /calls/search.</p>
+        </form>
+        <form class="api-box" data-action="rozetka-import-marketplace-threads">
+          <h3>Переписка з ROZETKA → CRM</h3>
+          <div class="inline-actions api-actions-top">
+            <button class="primary" type="submit">Отримати звернення</button>
+          </div>
+          <div class="form-grid">
+            <label class="field"><span>Одержувач</span><select name="sending_type"><option value="">усі</option>${option("2", "Support department")}${option("3", "Rozetka")}${option("4", "Quality Control")}</select></label>
+            <label class="field"><span>Тип звернення</span><select name="request_type"><option value="">усі</option>${option("1", "Contact request")}${option("2", "Delivery clarification")}${option("3", "Order cancellation")}${option("4", "Complaint")}${option("5", "Return")}${option("6", "Site information correction")}${option("7", "Payment question")}</select></label>
+            <label class="field"><span>Статус</span><select name="status_id"><option value="">усі</option>${option("1", "New")}${option("2", "Processing")}${option("3", "Unsolved")}${option("4", "Solved")}${option("5", "Closed")}</select></label>
+            <label class="field"><span>Сторінка</span><input name="page" inputmode="numeric" value="1"></label>
+            <label class="field"><span>Макс. сторінок</span><input name="maxPages" value="3" placeholder="3 або all"></label>
+          </div>
+          ${settings.lastThreadsSync ? `<p class="notice good small">Останнє завантаження переписки з ROZETKA: ${escapeHtml(settings.lastThreadsSync)}, отримано ${settings.lastThreadsCount || 0} рядків.</p>` : ""}
+          <p class="small muted">Цей блок не змішується з питаннями покупців: тут контроль звернень до ROZETKA, Support та Quality Control.</p>
+        </form>
+        </div>
+      </details>
+    </${tag}>
   `;
+}
+
+function submitRozetkaExchangeAction(action) {
+  const formActions = {
+    goods: "rozetka-import-goods",
+    orders: "rozetka-import-orders",
+    customerQuestions: "rozetka-import-customer-questions",
+    marketplaceThreads: "rozetka-import-marketplace-threads"
+  };
+  const formAction = formActions[action];
+  if (!formAction) return alert(`ROZETKA_EXCHANGE_ACTION_UNKNOWN: ${action || ""}`);
+  const form = document.querySelector(`[data-action="${CSS.escape(formAction)}"]`);
+  if (!form) return alert(`ROZETKA_EXCHANGE_FORM_NOT_FOUND: ${formAction}`);
+  const drawer = form.closest("[data-rozetka-exchange-details]");
+  if (drawer) drawer.open = true;
+  if (form.requestSubmit) form.requestSubmit();
+  else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
 
 function renderRozetkaImportedOrderFilters(filter, resultCount, totalCount) {
@@ -6320,7 +13035,7 @@ function renderRozetkaImportedOrderFilters(filter, resultCount, totalCount) {
       <label class="field compact"><span>Дата до</span><input name="to" type="date" value="${escapeHtml(filter.to)}"></label>
       <label class="field compact"><span>Статус виконання</span><select name="status">
         <option value="">Всі статуси</option>
-        ${MARKETPLACE_ORDER_STATUSES.map((item) => option(item.id, item.label, item.id === filter.status)).join("")}
+        ${marketplaceOrderStatusOptions(filter.status)}
       </select></label>
       <span class="pill info">${resultCount} із ${totalCount} замовлень</span>
       <button class="ghost" type="button" data-reset-rozetka-imported-order-filter>Скинути</button>
@@ -6343,21 +13058,21 @@ function rozetkaImportedOrderSortHeader(key, label, filter) {
 
 function renderRozetkaImportedOrderRow(order) {
   const buyer = marketplaceOrderBuyer(order);
-  const productLabel = rozetkaImportedOrderProductLabel(order);
   const orderTotal = rozetkaImportedOrderTotal(order);
   const canOrder = canManageMarketplaceOrder();
   return `
-    <tr>
+    <tr class="clickable-row" data-edit-marketplace-order="${escapeHtml(order.id)}" title="Клікніть, щоб змінити замовлення">
       <td><strong>${escapeHtml(order.date || "")}</strong><br><span class="small muted">${escapeHtml(order.rozetka?.importedAt || order.dates?.created || "")}</span></td>
       <td><strong>${escapeHtml(order.externalOrderId || "")}</strong><br><span class="small muted">${escapeHtml(String(order.rozetka?.id || ""))}</span></td>
       <td>${escapeHtml(buyer.name || "Покупець Rozetka")}<br><span class="small muted">${escapeHtml(buyer.phone || "-")}</span></td>
-      <td>${escapeHtml(productLabel)}<br><span class="small muted">${escapeHtml(String(order.qty || 1))} од. · ${escapeHtml(order.sku || "")}</span></td>
+      <td>${renderMarketplaceOrderProductSummary(order)}</td>
       <td>${formatMoney(orderTotal, order.currency || "UAH")}</td>
       <td>${marketplaceDeliveryStatusPill(order.delivery?.status || "new")}<br><span class="small muted">${escapeHtml(order.delivery?.ttn || "ТТН немає")}</span></td>
       <td>${marketplacePaymentStatusPill(order.payment?.status || "expected")}<br><span class="small muted">${escapeHtml(order.payment?.apiStatus || "")}</span></td>
       <td>${marketplaceOrderStatusPill(order.status)}</td>
       <td class="row-actions no-print">
-        <button class="ghost" data-edit-marketplace-order="${escapeHtml(order.id)}" ${canEditPostedDocument("marketplaceOrder") ? "" : "disabled"}>Відкрити</button>
+        ${renderOrderCommunicationButtons(order)}
+        <button class="ghost" data-edit-marketplace-order="${escapeHtml(order.id)}" ${canEditMarketplaceOrder() ? "" : "disabled"}>Відкрити</button>
         <button class="ghost" data-create-client-from-order="${escapeHtml(order.id)}" ${canOrder ? "" : "disabled"}>Клієнт</button>
         <button class="secondary" data-invoice-marketplace-order="${escapeHtml(order.id)}" ${canOrder && order.status !== "new_order" && !order.invoiceId ? "" : "disabled"}>Накладна</button>
       </td>
@@ -6422,32 +13137,44 @@ async function importRozetkaGoodsToCatalog(form) {
     button.textContent = "Отримання...";
   }
   try {
+    setExchangeProcess("rozetka", { status: "running", percent: 8, stage: "Товари Rozetka", message: "Готуємо імпорт товарів і публікацій.", code: "" });
+    setRozetkaProgress("running", 8, "Підготовка запиту товарів", "Формуємо параметри й фільтри для Rozetka.");
     const source = formData(form).source || "items";
     const endpoint = source === "goods_new" ? "/api/rozetka/goods/new/all" : "/api/rozetka/items/search/all";
     const fields = source === "goods_new"
       ? ["sync_source_id", "find_by_text", "article", "available", "page", "pageSize", "maxPages", "sort"]
       : ["item_active", "find_by_text", "article", "page", "maxPages", "sort"];
+    setRozetkaProgress("running", 22, "Запит до Rozetka API", "Очікуємо відповідь від сервера.");
     const payload = await fetchRozetkaInbound(form, endpoint, fields);
+    setRozetkaProgress("running", 52, "Отримано відповідь", "Розбираємо товари та публікації.");
     const items = rozetkaItems(payload);
-    const totals = { created: 0, updated: 0, publicationsCreated: 0, publicationsUpdated: 0 };
-    items.forEach((item) => {
+    const delta = changedExternalRows("rozetka", "goods", items, (item, index) => rozetkaExternalKey("goods", item, index));
+    const totals = { created: 0, updated: 0, publicationsCreated: 0, publicationsUpdated: 0, skipped: delta.skipped };
+    delta.rows.forEach(({ row: item, change }) => {
       const result = upsertRozetkaProduct(item);
       totals[result.mode] += 1;
       const publicationMode = upsertRozetkaPublication(item, result.product);
       if (publicationMode === "created") totals.publicationsCreated += 1;
       if (publicationMode === "updated") totals.publicationsUpdated += 1;
+      markExternalRecordApplied(change);
     });
+    setRozetkaProgress("running", 82, "Запис у CRM", `Оброблено ${items.length} позицій.`);
     finalizeRozetkaImport();
     settings.lastGoodsSync = currentTimestamp();
     settings.lastGoodsCount = items.length;
     settings.lastError = "";
+    setExchangeProcess("rozetka", { status: "success", percent: 100, stage: "Товари OK", message: `Товари: створено ${totals.created}, оновлено ${totals.updated}, публікацій створено ${totals.publicationsCreated}, оновлено ${totals.publicationsUpdated}.`, code: "" });
+    setRozetkaProgress("success", 100, "OK", `Успішно: створено ${totals.created}, оновлено ${totals.updated}, публікацій створено ${totals.publicationsCreated}, оновлено ${totals.publicationsUpdated}.`);
     addAudit(`Rozetka API: товари в каталог — створено ${totals.created}, оновлено ${totals.updated}, публікацій створено ${totals.publicationsCreated}, оновлено ${totals.publicationsUpdated}`, "system");
     render();
   } catch (error) {
-    settings.lastError = `Товари: ${error.message}`;
+    const code = rozetkaErrorCode(error);
+    settings.lastError = `Товари: [${code}] ${error.message}`;
+    setExchangeProcess("rozetka", { status: "error", percent: 100, stage: "Помилка товарів", message: `[${code}] ${error.message}`, code });
+    setRozetkaProgress("error", 100, "Імпорт товарів провалився", error.message, code);
     markRozetkaIntegration("token_needed");
     addAudit(`Rozetka API: помилка імпорту товарів — ${error.message}`, "system");
-    alert(`Rozetka товари: ${error.message}`);
+    alert(`Rozetka товари: [${code}] ${error.message}`);
     render();
   } finally {
     if (button) {
@@ -6466,13 +13193,20 @@ async function importRozetkaOrdersToCrm(form) {
     button.textContent = "Отримання...";
   }
   try {
+    setExchangeProcess("rozetka", { status: "running", percent: 8, stage: "Замовлення Rozetka", message: "Готуємо імпорт замовлень.", code: "" });
+    setRozetkaProgress("running", 8, "Підготовка запиту замовлень", "Формуємо період, статуси та ліміти.");
+    setRozetkaProgress("running", 24, "Запит до Rozetka API", "Отримуємо список замовлень і деталі.");
     const payload = await fetchRozetkaInbound(form, "/api/rozetka/orders/import", ["created_from", "created_to", "types", "status", "page", "maxPages", "maxDetails", "sort"]);
+    setRozetkaProgress("running", 58, "Отримано відповідь", "Розбираємо замовлення та покупців.");
     const orders = rozetkaOrders(payload);
-    const totals = orders.reduce((acc, order) => {
+    const delta = changedExternalRows("rozetka", "orders", orders, (order, index) => rozetkaExternalKey("orders", order, index));
+    const totals = delta.rows.reduce((acc, { row: order, change }) => {
       const result = upsertRozetkaOrder(order);
       acc[result] = (acc[result] || 0) + 1;
+      markExternalRecordApplied(change);
       return acc;
-    }, { created: 0, updated: 0 });
+    }, { created: 0, updated: 0, skipped: delta.skipped });
+    setRozetkaProgress("running", 84, "Запис у CRM", `Оброблено ${orders.length} замовлень.`);
     finalizeRozetkaImport();
     settings.lastOrdersSync = currentTimestamp();
     settings.lastOrdersCount = orders.length;
@@ -6481,14 +13215,129 @@ async function importRozetkaOrdersToCrm(form) {
       ...rozetkaImportedOrderFilter(),
       expanded: true
     };
+    setExchangeProcess("rozetka", { status: "success", percent: 100, stage: "Замовлення OK", message: `Замовлення: створено ${totals.created || 0}, оновлено ${totals.updated || 0}.`, code: "" });
+    setRozetkaProgress("success", 100, "OK", `Успішно: створено ${totals.created || 0}, оновлено ${totals.updated || 0} замовлень.`);
     addAudit(`Rozetka API: замовлення — створено ${totals.created || 0}, оновлено ${totals.updated || 0}`, "system");
     render();
     setTimeout(() => document.querySelector("[data-rozetka-orders-list]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   } catch (error) {
-    settings.lastError = `Замовлення: ${error.message}`;
+    const code = rozetkaErrorCode(error);
+    settings.lastError = `Замовлення: [${code}] ${error.message}`;
+    setExchangeProcess("rozetka", { status: "error", percent: 100, stage: "Помилка замовлень", message: `[${code}] ${error.message}`, code });
+    setRozetkaProgress("error", 100, "Імпорт замовлень провалився", error.message, code);
     markRozetkaIntegration("token_needed");
     addAudit(`Rozetka API: помилка імпорту замовлень — ${error.message}`, "system");
-    alert(`Rozetka замовлення: ${error.message}`);
+    alert(`Rozetka замовлення: [${code}] ${error.message}`);
+    render();
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
+}
+
+async function importRozetkaCustomerQuestionsToCrm(form) {
+  const settings = rozetkaInboundState();
+  const data = formData(form);
+  const source = data.source || "orders";
+  const button = form.querySelector('button[type="submit"]');
+  const previousText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Отримання...";
+  }
+  try {
+    setExchangeProcess("rozetka", { status: "running", percent: 10, stage: "Питання Rozetka", message: "Готуємо імпорт питань покупців.", code: "" });
+    setRozetkaProgress("running", 10, "Підготовка запиту переписки", "Формуємо блок клієнтських питань Rozetka.");
+    let rows = [];
+    if (source === "calls") {
+      const params = queryFromForm(form, ["page", "maxPages"]);
+      setRozetkaProgress("running", 35, "Запит /calls/search", "Отримуємо звернення Call Center та заявки на повернення.");
+      const payload = await fetchRozetkaInboundParams("/api/rozetka/calls/import", params);
+      rows = rozetkaCalls(payload).map(mapRozetkaCallToCustomerQuestion);
+    } else {
+      const params = queryFromForm(form, ["read", "search", "page", "maxPages", "sort"]);
+      params.set("msgType", source === "all" ? "all" : source);
+      setRozetkaProgress("running", 35, "Запит /messages/search", "Отримуємо питання про замовлення та запитання продавцю.");
+      const payload = await fetchRozetkaInboundParams("/api/rozetka/messages/import", params);
+      rows = rozetkaChats(payload).map((chat) => mapRozetkaChatToCustomerQuestion(chat, source === "all" ? "" : source));
+    }
+    setRozetkaProgress("running", 75, "Запис у CRM", `Оброблено ${rows.length} рядків переписки з клієнтами.`);
+    const delta = changedExternalRows("rozetka", "questions", rows, (row, index) => rozetkaExternalKey("questions", row, index));
+    const totals = delta.rows.reduce((acc, { row, change }) => {
+      const result = upsertMarketplaceCustomerQuestion(row);
+      acc[result] = (acc[result] || 0) + 1;
+      markExternalRecordApplied(change);
+      return acc;
+    }, { created: 0, updated: 0, skipped: delta.skipped });
+    finalizeRozetkaImport();
+    settings.lastQuestionsSync = currentTimestamp();
+    settings.lastQuestionsCount = rows.length;
+    settings.lastError = "";
+    setExchangeProcess("rozetka", { status: "success", percent: 100, stage: "Питання OK", message: `Питання покупців: створено ${totals.created || 0}, оновлено ${totals.updated || 0}.`, code: "" });
+    setRozetkaProgress("success", 100, "OK", `Питання покупців: створено ${totals.created || 0}, оновлено ${totals.updated || 0}.`);
+    addAudit(`Rozetka API: питання покупців — створено ${totals.created || 0}, оновлено ${totals.updated || 0}`, "system");
+    state.currentView = "sales";
+    state.currentSubViews = { ...(state.currentSubViews || {}), sales: "communication" };
+    render();
+  } catch (error) {
+    const code = rozetkaErrorCode(error);
+    settings.lastError = `Питання покупців: [${code}] ${error.message}`;
+    setExchangeProcess("rozetka", { status: "error", percent: 100, stage: "Помилка питань", message: `[${code}] ${error.message}`, code });
+    setRozetkaProgress("error", 100, "Імпорт питань провалився", error.message, code);
+    markRozetkaIntegration("token_needed");
+    addAudit(`Rozetka API: помилка імпорту питань покупців — ${error.message}`, "system");
+    alert(`Rozetka питання покупців: [${code}] ${error.message}`);
+    render();
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
+}
+
+async function importRozetkaMarketplaceThreadsToCrm(form) {
+  const settings = rozetkaInboundState();
+  const button = form.querySelector('button[type="submit"]');
+  const previousText = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Отримання...";
+  }
+  try {
+    setExchangeProcess("rozetka", { status: "running", percent: 10, stage: "Звернення Rozetka", message: "Готуємо імпорт звернень до ROZETKA.", code: "" });
+    setRozetkaProgress("running", 10, "Підготовка запиту ROZETKA", "Формуємо фільтри звернень до маркетплейсу.");
+    setRozetkaProgress("running", 35, "Запит /calls/search", "Отримуємо звернення Support / ROZETKA / Quality Control.");
+    const payload = await fetchRozetkaInbound(form, "/api/rozetka/calls/import", ["sending_type", "request_type", "status_id", "page", "maxPages"]);
+    const rows = rozetkaCalls(payload).map(mapRozetkaCallToServiceThread);
+    setRozetkaProgress("running", 75, "Запис у CRM", `Оброблено ${rows.length} звернень до маркетплейсу.`);
+    const delta = changedExternalRows("rozetka", "threads", rows, (row, index) => rozetkaExternalKey("threads", row, index));
+    const totals = delta.rows.reduce((acc, { row, change }) => {
+      const result = upsertMarketplaceServiceThread(row);
+      acc[result] = (acc[result] || 0) + 1;
+      markExternalRecordApplied(change);
+      return acc;
+    }, { created: 0, updated: 0, skipped: delta.skipped });
+    finalizeRozetkaImport();
+    settings.lastThreadsSync = currentTimestamp();
+    settings.lastThreadsCount = rows.length;
+    settings.lastError = "";
+    setExchangeProcess("rozetka", { status: "success", percent: 100, stage: "ROZETKA OK", message: `Переписка з ROZETKA: створено ${totals.created || 0}, оновлено ${totals.updated || 0}.`, code: "" });
+    setRozetkaProgress("success", 100, "OK", `Переписка з ROZETKA: створено ${totals.created || 0}, оновлено ${totals.updated || 0}.`);
+    addAudit(`Rozetka API: переписка з ROZETKA — створено ${totals.created || 0}, оновлено ${totals.updated || 0}`, "system");
+    state.currentView = "sales";
+    state.currentSubViews = { ...(state.currentSubViews || {}), sales: "communication" };
+    render();
+  } catch (error) {
+    const code = rozetkaErrorCode(error);
+    settings.lastError = `Переписка з ROZETKA: [${code}] ${error.message}`;
+    setExchangeProcess("rozetka", { status: "error", percent: 100, stage: "Помилка ROZETKA", message: `[${code}] ${error.message}`, code });
+    setRozetkaProgress("error", 100, "Імпорт переписки з ROZETKA провалився", error.message, code);
+    markRozetkaIntegration("token_needed");
+    addAudit(`Rozetka API: помилка імпорту переписки з ROZETKA — ${error.message}`, "system");
+    alert(`Rozetka переписка з ROZETKA: [${code}] ${error.message}`);
     render();
   } finally {
     if (button) {
@@ -6543,7 +13392,7 @@ function renderMarketplacePublicationRow(publication, visible = true) {
   const product = byId(state.products, publication.productId);
   const crmQty = productAvailableQty(publication.productId);
   return `
-    <tr data-marketplace-publication-row data-publication-search-text="${escapeHtml(marketplacePublicationSearchText(publication))}" ${visible ? "" : 'style="display: none;"'}>
+    <tr class="clickable-row" data-marketplace-publication-row data-edit-publication="${escapeHtml(publication.id)}" data-publication-search-text="${escapeHtml(marketplacePublicationSearchText(publication))}" title="Клікніть, щоб змінити публікацію" ${visible ? "" : 'style="display: none;"'}>
       <td>${escapeHtml(publication.marketplace)}<br><span class="small muted">${escapeHtml(publication.lastSync || "не синхронізовано")}</span></td>
       <td><strong>${escapeHtml(publication.sku)}</strong><br><span class="small muted">${escapeHtml(publication.externalId || "без зовн. ID")}</span></td>
       <td>${escapeHtml(product ? `${product.brand} ${product.model}` : "Товар не знайдено")}<br><span class="small muted">${escapeHtml(publication.title)}</span></td>
@@ -6553,7 +13402,7 @@ function renderMarketplacePublicationRow(publication, visible = true) {
       <td>${escapeHtml(publication.manager)}</td>
       <td>${statusPill(publication.status)}</td>
       <td class="row-actions no-print">
-        <button class="ghost" data-edit-publication="${escapeHtml(publication.id)}">Редагувати</button>
+        <button class="ghost" data-edit-publication="${escapeHtml(publication.id)}" ${canEditMarketplacePublication() ? "" : "disabled"}>Редагувати</button>
         <button class="secondary" data-sync-publication="${escapeHtml(publication.id)}">Синхр.</button>
       </td>
     </tr>
@@ -6595,7 +13444,6 @@ function renderMarketplaces() {
   const orderFilter = marketplaceOrderFilter();
   const publicationFilter = marketplacePublicationFilter();
   const names = marketplaceNames();
-  const publicationLines = marketplacePublicationDraftLines();
   const newOrders = state.marketplaceOrders.filter((order) => order.status === "new_order").length;
   const needsSync = state.marketplacePublications.filter((publication) => publication.status !== "published").length;
   const periodPublications = state.marketplacePublications.filter((publication) => dateInPeriod(String(publication.lastSync || today).slice(0, 10), docsPeriod));
@@ -6612,23 +13460,11 @@ function renderMarketplaces() {
       <article class="card metric good"><span>Канали</span><strong>${names.length}</strong><small>Rozetka, Prom, Epicentr, Allo.</small></article>
     </section>
 
-    ${renderRozetkaInboundPanel()}
     ${renderRozetkaImportedOrdersPanel()}
 
     <section class="panel section-band">
         <h2>Створити публікацію</h2>
-        <form class="stack" data-action="create-marketplace-publication">
-          <div class="table-wrap invoice-lines">
-            <table>
-              <thead><tr><th>Маркетплейс</th><th>Товар</th><th>SKU каналу</th><th>Зовн. ID</th><th>Назва публікації</th><th>Ціна</th><th>Валюта</th><th>Менеджер</th><th>Дії</th></tr></thead>
-              <tbody>${publicationLines.map((line, index) => renderMarketplacePublicationLine(line, index, names)).join("")}</tbody>
-            </table>
-          </div>
-          <div class="inline-actions no-print">
-            <button class="secondary" type="button" data-add-marketplace-publication-line>Додати ще</button>
-          </div>
-          <button class="primary" type="submit">Додати публікації</button>
-        </form>
+        ${renderMarketplacePublicationCreateForm()}
     </section>
 
     <section class="panel section-band no-print">
@@ -6662,7 +13498,7 @@ function renderMarketplaces() {
     <section class="panel section-band" data-print-area="marketplaceOrders" data-print-title="Маркетплейси · замовлення">
       <h2>Замовлення маркетплейсів</h2>
       <div class="status-legend no-print">
-        ${MARKETPLACE_ORDER_STATUSES.map((item) => `<span class="pill ${item.className}">${item.label}</span>`).join("")}
+        ${salesFunnelRules().map((item) => `<span class="pill ${item.className}">${escapeHtml(item.label)}</span>`).join("")}
       </div>
       ${renderMarketplaceOrderFilters(names, orderFilter, filteredOrders.length)}
       <details class="order-dropdown" data-marketplace-orders-dropdown ${orderFilter.expanded ? "open" : ""}>
@@ -6678,47 +13514,63 @@ function renderMarketplaces() {
             <thead><tr><th>Дата</th><th>Маркетплейс</th><th>Замовлення</th><th>Покупець</th><th>Товар</th><th>Доставка / ТТН</th><th>Оплата</th><th>Менеджер</th><th>Статус</th><th>Дії</th></tr></thead>
             <tbody>
             ${filteredOrders.map((order) => {
-              const product = byId(state.products, order.productId);
               const buyer = marketplaceOrderBuyer(order);
-              const orderTotal = Number(order.qty || 1) * Number(order.price || 0);
+              const orderTotal = marketplaceOrderTotal(order);
               const canOrder = canManageMarketplaceOrder();
               const canStatus = canChangeMarketplaceOrderStatus();
               const canDelivery = canTrackMarketplaceDelivery();
               const canPayment = canTrackMarketplacePayment();
+              const canSendWarehouse = canSendMarketplaceOrderToWarehouse();
+              const canPicking = canConfirmMarketplacePicking();
+              const canWarehouseHandover = canHandoverMarketplaceOrderToLogistics();
+              const canLogisticsAccept = canAcceptMarketplaceOrderLogistics();
+              const issues = marketplaceOrderMissingFields(order);
+              const deliveryAction = marketplaceOrderDeliveryActionState(order);
               return `
-                <tr>
-                  <td>
+                <tr class="clickable-row ${issues.length ? "row-has-issues" : ""}" data-edit-marketplace-order="${escapeHtml(order.id)}" title="Клікніть, щоб змінити замовлення">
+                  <td${orderCellClass(issues, ["date", "date:created", "date:agreed", "date:delivery"])}>
                     <strong>${order.date}</strong>
                     <br><span class="small muted">створено: ${order.dates?.created || order.date}</span>
                     ${order.dates?.agreed ? `<br><span class="small muted">погоджено: ${order.dates.agreed}</span>` : ""}
                     ${order.dates?.delivery ? `<br><span class="small muted">доставка: ${order.dates.delivery}</span>` : ""}
                   </td>
-                  <td><strong>${order.marketplace}</strong><br><span class="small muted">${order.sku}</span></td>
+                  <td${orderCellClass(issues, ["marketplace", "sku"])}><strong>${order.marketplace}</strong><br><span class="small muted">${order.sku || "SKU не внесено"}</span></td>
                   <td><strong>${order.externalOrderId}</strong><br><span class="small muted">${order.invoiceId ? `накладна ${order.invoiceId}` : "накладну ще не створено"}</span></td>
-                  <td>${buyer.name}<br><span class="small muted">${buyer.phone || "-"} · ${order.clientId ? clientName(order.clientId) : "клієнт ще не створений"}</span></td>
-                  <td>${product ? `${product.brand} ${product.model}` : order.sku}<br><span class="small muted">${order.qty} од. × ${formatMoney(order.price, order.currency)}</span></td>
-                  <td>
+                  <td${orderCellClass(issues, ["buyerName", "buyerContact", "clientId"])}>${buyer.name || "покупець не внесений"}<br><span class="small muted">${buyer.phone || buyer.email || "контакт не внесено"} · ${order.clientId ? clientName(order.clientId) : "клієнт ще не створений"}</span></td>
+                  <td${orderCellClass(issues, ["productId", "qty", "price", "currency"])}>${renderMarketplaceOrderProductSummary(order)}</td>
+                  <td${orderCellClass(issues, ["deliveryService", "deliveryCity", "deliveryAddress", "deliveryTtn"])}>
                     ${marketplaceDeliveryStatusPill(order.delivery.status)}
                     <br><strong>${order.delivery.ttn || "ТТН не внесено"}</strong>
                     <br><span class="small muted">${order.delivery.service || "-"} · ${order.delivery.city || ""} ${order.delivery.warehouse || ""}</span>
                     <br><span class="small muted">${order.delivery.apiStatus || "API не перевірявся"}</span>
                   </td>
-                  <td>
+                  <td${orderCellClass(issues, ["paymentStatus", "paymentAmount", "paymentMethod", "paymentSource", "date:paid"])}>
                     ${marketplacePaymentStatusPill(order.payment.status)}
                     <br>${formatMoney(order.payment.amount || orderTotal, order.currency)}
                     <br><span class="small muted">${order.payment.source || order.payment.method || "-"}</span>
                     <br><span class="small muted">${order.payment.apiStatus || "API не перевірявся"}</span>
                   </td>
-                  <td>${order.manager}</td>
-                  <td>${marketplaceOrderStatusPill(order.status)}</td>
+                  <td${orderCellClass(issues, ["manager"])}>${order.manager || "менеджер не призначений"}</td>
+                  <td${orderCellClass(issues, ["workflowSla", "pendingAction"])}>${marketplaceOrderStatusPill(order.status)}${renderOrderIssueCompact(order)}${renderOrderProcessStrip(order)}</td>
                   <td class="row-actions no-print">
-                    <button class="ghost" data-edit-marketplace-order="${order.id}" ${canEditPostedDocument("marketplaceOrder") ? "" : "disabled"}>Змінити</button>
+                    ${renderOrderCommunicationButtons(order)}
+                    <button class="ghost" data-edit-marketplace-order="${order.id}" ${canEditMarketplaceOrder() ? "" : "disabled"}>Змінити</button>
                     <button class="ghost" data-notify-marketplace-order="${order.id}" ${canOrder ? "" : "disabled"}>Повідомити</button>
                     <button class="ghost" data-create-client-from-order="${order.id}" ${canOrder ? "" : "disabled"}>Клієнт</button>
-                    <button class="ghost" data-agree-marketplace-order="${order.id}" ${canStatus && order.status === "new_order" ? "" : "disabled"}>Узгоджено</button>
-                    <button class="ghost" data-marketplace-to-warehouse="${order.id}" ${canStatus && ["agreed", "sent_to_warehouse"].includes(order.status) ? "" : "disabled"}>На склад</button>
-                    <button class="secondary" data-invoice-marketplace-order="${order.id}" ${canOrder && order.status !== "new_order" && !order.invoiceId ? "" : "disabled"}>Накладна</button>
-                    <button class="secondary" data-marketplace-to-delivery="${order.id}" ${canDelivery && ["sent_to_warehouse", "sent_to_delivery"].includes(order.status) ? "" : "disabled"}>На доставку</button>
+                    <button class="${orderActionClass(order, "waitClient")}" data-marketplace-wait-client="${order.id}" ${canStatus && ["new_order", "in_progress", "waiting_client"].includes(order.status) ? "" : "disabled"}>Очікує клієнта</button>
+                    <button class="${orderActionClass(order, "confirm")}" data-agree-marketplace-order="${order.id}" ${canStatus && ["new_order", "in_progress", "waiting_client"].includes(order.status) ? "" : "disabled"}>Підтверджено</button>
+                    <button class="${orderActionClass(order, "waitPayment")}" data-marketplace-wait-payment="${order.id}" ${canStatus && order.payment?.status !== "paid" && ["confirmed_by_client", "upsell", "waiting_payment"].includes(order.status) ? "" : "disabled"}>Очікує оплату</button>
+                    <button class="${orderActionClass(order, "warehouse")}" data-marketplace-to-warehouse="${order.id}" ${canSendWarehouse && deliveryAction.canWarehouse ? "" : "disabled"}>На відбірку</button>
+                    <button class="secondary" data-invoice-marketplace-order="${order.id}" ${canOrder && order.status !== "new_order" && order.status !== "cancelled" && !order.invoiceId ? "" : "disabled"}>Накладна</button>
+                    <button class="${orderActionClass(order, "picked")}" data-marketplace-picked="${order.id}" ${canPicking && deliveryAction.canPicked ? "" : "disabled"}>Відбірка ОК</button>
+                    <button class="${orderActionClass(order, "handoverDelivery", "secondary")}" data-marketplace-handover-delivery="${order.id}" ${canWarehouseHandover && deliveryAction.canHandover ? "" : "disabled"}>Передати логісту</button>
+                    <button class="${orderActionClass(order, "logisticsAccept", "secondary")}" data-marketplace-to-delivery="${order.id}" ${canLogisticsAccept && deliveryAction.canLogisticsAccept ? "" : "disabled"}>Логіст прийняв</button>
+                    <button class="${orderActionClass(order, "trackDelivery", "secondary")}" data-track-marketplace-delivery="${order.id}" ${canDelivery && deliveryAction.canTrack ? "" : "disabled"}>Статус доставки</button>
+                    <button class="secondary" data-marketplace-upsell="${order.id}" ${canOrder && ["confirmed_by_client", "upsell", "waiting_payment", "paid"].includes(order.status) ? "" : "disabled"}>Апсел</button>
+                    <button class="${orderActionClass(order, "complete")}" data-marketplace-complete="${order.id}" ${canOrder && ["delivered", "completed"].includes(order.status) ? "" : "disabled"}>Завершено</button>
+                    <button class="${orderActionClass(order, "followUp")}" data-marketplace-aftersale="${order.id}" ${canOrder && ["completed", "follow_up"].includes(order.status) ? "" : "disabled"}>Follow-up</button>
+                    <button class="${orderActionClass(order, "repeat")}" data-marketplace-repeat-sale="${order.id}" ${canOrder && ["follow_up", "repeat_sale"].includes(order.status) ? "" : "disabled"}>Повтор</button>
+                    <button class="danger" data-marketplace-cancel="${order.id}" ${canOrder && !MARKETPLACE_FINAL_STATUSES.includes(order.status) ? "" : "disabled"}>Скасовано</button>
                   </td>
                 </tr>
               `;
@@ -6967,6 +13819,10 @@ function renderRoles() {
     </section>
 
     <section class="section-band">
+      ${renderPermissionMatrix("Доступ до підменю", "subviews", ROLE_SUBVIEW_PERMISSIONS, disabled)}
+    </section>
+
+    <section class="section-band">
       ${renderPermissionMatrix("Дозволи на створення документів", "documents", ROLE_DOCUMENT_PERMISSIONS, disabled)}
     </section>
 
@@ -6991,6 +13847,187 @@ function formData(form) {
   });
   return data;
 }
+
+const crmNativeFetch = typeof window.fetch === "function" ? window.fetch.bind(window) : null;
+const CLIENT_LOG_SECRET_PATTERN = /(password|token|api[_-]?key|secret|certificate|private[_-]?key|refresh|authorization|bearer)/i;
+
+function clientLogShouldRedact(key = "") {
+  return CLIENT_LOG_SECRET_PATTERN.test(String(key || ""));
+}
+
+function clientLogValue(key, value) {
+  if (clientLogShouldRedact(key)) return "[redacted]";
+  if (typeof File !== "undefined" && value instanceof File) {
+    return { fileName: value.name, size: value.size, type: value.type };
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (value === undefined) return null;
+  return value;
+}
+
+function clientLogFormSnapshot(form) {
+  const data = {};
+  if (!form) return data;
+  const formPayload = new FormData(form);
+  formPayload.forEach((value, key) => {
+    const safeValue = clientLogValue(key, value);
+    if (data[key] === undefined) {
+      data[key] = safeValue;
+    } else if (Array.isArray(data[key])) {
+      data[key].push(safeValue);
+    } else {
+      data[key] = [data[key], safeValue];
+    }
+  });
+  return data;
+}
+
+function clientLogDataset(dataset = {}) {
+  return Object.fromEntries(Object.entries(dataset).map(([key, value]) => [key, clientLogValue(key, value)]));
+}
+
+function clientLogFieldSnapshot(field) {
+  if (!field) return {};
+  const key = field.name || field.id || field.dataset?.field || field.type || "field";
+  let value = "";
+  if (field.type === "checkbox") {
+    value = Boolean(field.checked);
+  } else if (field.type === "radio") {
+    value = field.checked ? field.value : "";
+  } else if (field.tagName === "SELECT" && field.multiple) {
+    value = Array.from(field.selectedOptions).map((item) => item.value);
+  } else {
+    value = field.value;
+  }
+  return {
+    name: key,
+    type: field.type || field.tagName?.toLowerCase() || "",
+    value: clientLogValue(key, value)
+  };
+}
+
+function clientLogHeadersSnapshot(headers) {
+  try {
+    if (!headers) return {};
+    if (headers instanceof Headers) return Object.fromEntries(headers.entries());
+    if (Array.isArray(headers)) return Object.fromEntries(headers);
+    return { ...headers };
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+function clientLogBodySnapshot(body) {
+  try {
+    if (body === undefined || body === null) return null;
+    if (typeof body === "string") return body;
+    if (body instanceof URLSearchParams) return body.toString();
+    if (body instanceof FormData) {
+      const data = {};
+      body.forEach((value, key) => {
+        data[key] = clientLogValue(key, value);
+      });
+      return data;
+    }
+    if (typeof Blob !== "undefined" && body instanceof Blob) {
+      return { type: body.type, size: body.size };
+    }
+    return String(body);
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+function clientLogLocationSnapshot() {
+  return {
+    path: window.location.pathname,
+    search: window.location.search,
+    hash: window.location.hash
+  };
+}
+
+function logClientAction(eventName, details = {}) {
+  try {
+    const currentView = typeof state !== "undefined" ? state.currentView : "";
+    const payload = {
+      event: eventName,
+      timestamp: new Date().toISOString(),
+      app: { version: APP_VERSION, build: APP_BUILD },
+      location: clientLogLocationSnapshot(),
+      view: currentView || "",
+      subview: typeof state !== "undefined" ? (state.currentSubViews?.[currentView] || "") : "",
+      manager: typeof state !== "undefined" ? (state.currentManager || "") : "",
+      role: typeof currentRoleKey === "function" ? currentRoleKey() : "",
+      details
+    };
+    const json = JSON.stringify(payload);
+    const canBeacon = typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function" && json.length < 60000;
+    if (canBeacon) {
+      const sent = navigator.sendBeacon(CLIENT_LOG_ENDPOINT, new Blob([json], { type: "application/json" }));
+      if (sent) return;
+    }
+    if (!crmNativeFetch) return;
+    crmNativeFetch(CLIENT_LOG_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: json,
+      cache: "no-store",
+      keepalive: json.length < 60000
+    }).catch(() => {});
+  } catch (error) {
+  }
+}
+
+function installClientFetchLogger() {
+  if (!crmNativeFetch) return;
+  window.fetch = async (input, init = {}) => {
+    const startedAt = performance.now();
+    const url = typeof input === "string" ? input : (input?.url || "");
+    const requestUrl = new URL(url || window.location.href, window.location.href);
+    if (requestUrl.pathname === CLIENT_LOG_ENDPOINT) {
+      return crmNativeFetch(input, init);
+    }
+    const method = (init.method || input?.method || "GET").toUpperCase();
+    logClientAction("fetch_request", {
+      method,
+      url: requestUrl.toString(),
+      headers: clientLogHeadersSnapshot(init.headers || input?.headers),
+      body: clientLogBodySnapshot(init.body)
+    });
+    try {
+      const response = await crmNativeFetch(input, init);
+      const contentType = response.headers.get("content-type") || "";
+      const responseDetails = {
+        method,
+        url: requestUrl.toString(),
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        contentType,
+        elapsedMs: Math.round(performance.now() - startedAt)
+      };
+      if (contentType.match(/json|text|javascript|html|css|xml|x-www-form-urlencoded/i)) {
+        try {
+          responseDetails.body = await response.clone().text();
+        } catch (error) {
+          responseDetails.bodyError = error.message;
+        }
+      }
+      logClientAction("fetch_response", responseDetails);
+      return response;
+    } catch (error) {
+      logClientAction("fetch_error", {
+        method,
+        url: requestUrl.toString(),
+        error: error.message,
+        elapsedMs: Math.round(performance.now() - startedAt)
+      });
+      throw error;
+    }
+  };
+}
+
+installClientFetchLogger();
 
 function loginUser(form) {
   const data = formData(form);
@@ -7029,9 +14066,9 @@ function loginClient(form) {
 function logoutUser() {
   const employee = currentEmployee();
   const client = authenticatedClient();
-  sessionStorage.removeItem("arms-crm-auth-employee-id");
-  sessionStorage.removeItem("arms-crm-auth-client-id");
-  sessionStorage.removeItem("arms-crm-auth-mode");
+  appSessionStorage.removeItem("arms-crm-auth-employee-id");
+  appSessionStorage.removeItem("arms-crm-auth-client-id");
+  appSessionStorage.removeItem("arms-crm-auth-mode");
   authEmployeeId = "";
   authClientId = "";
   authMode = "";
@@ -7227,6 +14264,11 @@ function createOrAppendInvoiceDraft(data = {}, preparedLines = [], options = {})
     existing.ttn = data.ttn || existing.ttn;
     existing.comment = uniqueList([existing.comment || "", data.comment || ""].filter(Boolean)).join(" · ");
     existing.pendingPaid = Math.min(Number(existing.pendingPaid || 0) + Number(data.pendingPaid || data.paid || 0), existing.total);
+    existing.paymentMode = data.paymentMode || existing.paymentMode || "";
+    existing.paymentSource = data.paymentSource || existing.paymentSource || "";
+    existing.terminalId = data.terminalId || existing.terminalId || "";
+    existing.prro = data.prro === undefined ? existing.prro === true : data.prro === true || data.prro === "true";
+    existing.paymentRef = data.paymentRef || existing.paymentRef || "";
     existing.dueDate = invoiceDueDateFromData({ ...data, date: existing.date });
     return { invoice: existing, created: false };
   }
@@ -7251,6 +14293,11 @@ function createOrAppendInvoiceDraft(data = {}, preparedLines = [], options = {})
     discount: 0,
     dueDate: invoiceDueDateFromData(data),
     cashArticle: data.cashArticle || "",
+    paymentMode: data.paymentMode || "",
+    paymentSource: data.paymentSource || "",
+    terminalId: data.terminalId || "",
+    prro: data.prro === true || data.prro === "true",
+    paymentRef: data.paymentRef || "",
     accounting: data.accounting === true || data.accounting === "true",
     locked: false,
     status: "draft",
@@ -7318,6 +14365,7 @@ function postSalesInvoiceDraft(invoice) {
   });
   const paid = Math.min(Number(invoice.pendingPaid || 0), Number(invoice.total || 0));
   if (paid > 0) {
+    const paymentSource = ["cash", "bank", "card"].includes(invoice.paymentSource) ? invoice.paymentSource : "bank";
     invoice.paid = paid;
     state.payments.unshift({
       id: uniqueId("pay"),
@@ -7331,11 +14379,11 @@ function postSalesInvoiceDraft(invoice) {
       advance: false,
       clientId: invoice.clientId,
       firmId: invoice.firmId,
-      source: "bank",
-      terminalId: "",
-      prro: false,
-      method: "Оплата з чернетки",
-      bankRef: "invoice-draft"
+      source: paymentSource,
+      terminalId: paymentSource === "card" ? (invoice.terminalId || "") : "",
+      prro: paymentSource === "cash" ? invoice.prro === true : false,
+      method: invoice.paymentMode || paymentMethodFromSource(paymentSource),
+      bankRef: invoice.paymentRef || (invoice.channel === "Магазин" ? `retail-${invoice.id}` : "invoice-draft")
     });
   }
 }
@@ -7404,6 +14452,7 @@ function createInvoice(form) {
   const data = formData(form);
   data.firmId = data.firmId || state.settings.firms[0]?.id || "vat";
   data.warehouseId = data.warehouseId || "wh-store";
+  if (data.paymentSource === "card" && !data.terminalId) return alert("Для оплати карткою потрібно вибрати POS-термінал.");
   const draftLines = collectSaleLinesFromForm(form);
   if (!draftLines.length) return alert("Додайте хоча б один товар у накладну.");
   const allSerialIds = draftLines.flatMap((line) => line.serialIds || []);
@@ -7425,6 +14474,7 @@ function createInvoice(form) {
     const discount = Math.min(Math.max(parseDecimal(rawLine.discount || 0), 0), 100);
     const currency = rawLine.currency || productSalePrice(product, data.priceType).currency || product.currency || "UAH";
     const lineTotal = Math.round(qty * price * (1 - discount / 100) * 100) / 100;
+    addLinkedRequisiteValue(product, "product", "barcodes", rawLine.barcode);
     preparedLines.push({ ...rawLine, product, serialIds, qty, price, discount, currency, lineTotal });
   }
 
@@ -8397,9 +15447,7 @@ function applyPurchase(purchase, options = {}) {
   const product = byId(state.products, purchase.productId);
   product.cost = purchase.cost;
   product.costCurrency = purchase.currency;
-  if (!product.barcode && purchase.barcode) {
-    product.barcode = purchase.barcode;
-  }
+  addLinkedRequisiteValue(product, "product", "barcodes", purchase.barcode);
 
   if (product.type === "weapon") {
     purchase.serials.forEach((serial, index) => {
@@ -8586,7 +15634,7 @@ function createProduct(form) {
 function createClient(form) {
   if (!canCreateDocument("clientCard")) return alert("Поточна роль не має права створювати клієнта.");
   const data = formData(form);
-  state.clients.unshift({
+  state.clients.unshift(normalizeClientRequisites({
     id: `c-${String(Date.now()).slice(-6)}`,
     name: data.name,
     type: data.type,
@@ -8602,7 +15650,7 @@ function createClient(form) {
     cabinetEnabled: data.cabinetEnabled === "true",
     responsibleStorage: data.responsibleStorage === "true",
     address: data.address
-  });
+  }));
   addAudit(`Додано клієнта ${data.name}`);
   render();
 }
@@ -8611,7 +15659,7 @@ function productPayloadFromForm(data, existingId = "") {
   const existingProduct = existingId ? byId(state.products, existingId) : {};
   const barcode = String(data.barcode || "").trim();
   if (!barcode) throw new Error("QR або штрихкод обов'язковий для картки товару.");
-  if (state.products.some((product) => product.id !== existingId && product.barcode && String(product.barcode).trim().toLowerCase() === barcode.toLowerCase())) {
+  if (state.products.some((product) => product.id !== existingId && linkedRequisiteIncludes(product, "product", "barcodes", barcode))) {
     throw new Error("Такий QR/штрихкод уже використовується в іншому товарі.");
   }
 
@@ -8622,14 +15670,23 @@ function productPayloadFromForm(data, existingId = "") {
   }
   if (type !== "weapon" && caliber === "без калібру") caliber = "";
 
-  const internalCode = resolveDictionaryValue("internalCodes", data.internalCodeValue, data.newInternalCode, "Внутрішній код");
-  if (state.products.some((product) => product.id !== existingId && normalizedText(product.internalCode) === normalizedText(internalCode))) {
+  const supplierSku = data.supplierSku !== undefined
+    ? String(data.supplierSku || "").trim()
+    : resolveDictionaryValue("supplierSkus", data.supplierSkuValue, data.newSupplierSku, "Артикул постачальника");
+  const internalCode = data.internalCode !== undefined
+    ? String(data.internalCode || "").trim()
+    : resolveDictionaryValue("internalCodes", data.internalCodeValue, data.newInternalCode, "Внутрішній код");
+  const uktzed = data.uktzed !== undefined
+    ? String(data.uktzed || "").trim()
+    : resolveDictionaryValue("uktzed", data.uktzedValue, data.newUktzed, "УКТЗЕД");
+  const marketplaceSku = String(data.marketplaceSku || "").trim();
+  if (state.products.some((product) => product.id !== existingId && linkedRequisiteIncludes(product, "product", "internalCodes", internalCode))) {
     throw new Error("Такий внутрішній код уже використовується в іншій картці товару.");
   }
   const prices = collectProductPrices(data, existingProduct);
   const retail = prices.retail || Object.values(prices)[0] || { amount: 0, currency: "UAH" };
 
-  return {
+  return normalizeProductRequisites({
     type,
     model: resolveDictionaryValue("models", data.modelValue, data.newModel, "Модель"),
     caliber,
@@ -8638,9 +15695,13 @@ function productPayloadFromForm(data, existingId = "") {
     unit: resolveDictionaryValue("units", data.unitValue, data.newUnit, "Одиниця"),
     erzRequired: data.erzRequired === "true",
     barcode,
-    supplierSku: resolveDictionaryValue("supplierSkus", data.supplierSkuValue, data.newSupplierSku, "Артикул постачальника"),
+    barcodes: uniqueList([...(existingProduct.barcodes || []), barcode, existingProduct.qrCode]),
+    supplierSku,
+    supplierSkus: uniqueList([...(existingProduct.supplierSkus || []), supplierSku]),
     internalCode,
-    uktzed: resolveDictionaryValue("uktzed", data.uktzedValue, data.newUktzed, "УКТЗЕД"),
+    internalCodes: uniqueList([...(existingProduct.internalCodes || []), internalCode]),
+    uktzed,
+    uktzeds: uniqueList([...(existingProduct.uktzeds || []), uktzed]),
     price: parseDecimal(retail.amount, 0),
     currency: retail.currency || "UAH",
     prices,
@@ -8648,11 +15709,13 @@ function productPayloadFromForm(data, existingId = "") {
     costCurrency: data.costCurrency || existingProduct.costCurrency || "UAH",
     minStock: Number(data.minStock || 0),
     leadTimeDays: Number(data.leadTimeDays || 0),
-    marketplaceSku: data.marketplaceSku,
+    marketplaceSku,
+    marketplaceSkus: uniqueList([...(existingProduct.marketplaceSkus || []), marketplaceSku]),
+    skus: uniqueList([...(existingProduct.skus || []), marketplaceSku, supplierSku, internalCode, barcode]),
     catalogTag: data.catalogTag || "",
     description: data.description,
     photos: clone(productImagesDraft)
-  };
+  });
 }
 
 function ensureRegularProductStock(product) {
@@ -8676,6 +15739,7 @@ function createProductCard(form) {
     syncCatalogParametersFromProducts(state);
     productImagesDraft = [];
     addAudit(`Додано товар ${product.brand} ${product.model}`);
+    form.closest(".modal-backdrop")?.remove();
     render();
   } catch (error) {
     alert(error.message);
@@ -8696,19 +15760,20 @@ function productEditorForm(product) {
       <div class="field wide">
         <span>Штрих / QR</span>
         <div class="input-action">
-          <input name="barcode" data-product-barcode required value="${escapeHtml(product.barcode || "")}" placeholder="скануйте або створіть код">
+          <input name="barcode" data-product-barcode required data-skip-suggestions data-linked-requisite="product" data-linked-parent-field="id" data-requisite-field="barcodes" data-requisite-label="QR / штрихкод" value="${escapeHtml(product.barcode || "")}" placeholder="скануйте або створіть код">
           <button class="ghost" type="button" data-generate-product-barcode>Створити</button>
+          <button class="ghost" type="button" data-add-linked-requisite data-target-name="barcode" title="Додати QR / штрихкод">+</button>
         </div>
       </div>
-      ${dictionaryField("supplierSkus", "Артикул постач.", "supplierSkuValue", "newSupplierSku", { selected: product.supplierSku || "", placeholder: "новий артикул постачальника" })}
-      ${dictionaryField("internalCodes", "Внутр. код", "internalCodeValue", "newInternalCode", { selected: product.internalCode || "", placeholder: "новий внутрішній код" })}
-      ${dictionaryField("uktzed", "УКТЗЕД", "uktzedValue", "newUktzed", { selected: product.uktzed || "", placeholder: "новий код УКТЗЕД" })}
+      ${linkedRequisiteInput({ parentType: "product", parentField: "id", fieldKey: "supplierSkus", name: "supplierSku", label: "Артикул постач.", required: true, value: product.supplierSku || "" })}
+      ${linkedRequisiteInput({ parentType: "product", parentField: "id", fieldKey: "internalCodes", name: "internalCode", label: "Внутр. код", required: true, value: product.internalCode || "" })}
+      ${linkedRequisiteInput({ parentType: "product", parentField: "id", fieldKey: "uktzeds", name: "uktzed", label: "УКТЗЕД", required: true, value: product.uktzed || "" })}
       <label class="field"><span>Прихідна</span><input name="cost" data-field-lock="cost" value="${escapeHtml(product.cost || 0)}"></label>
       <label class="field"><span>Валюта приходу</span><select name="costCurrency" data-field-lock="cost">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === product.costCurrency)).join("")}</select></label>
       ${productPriceInputs(product)}
       <label class="field"><span>Мін. залишок</span><input name="minStock" type="number" min="0" value="${escapeHtml(product.minStock || 0)}"></label>
       <label class="field"><span>Поставка, днів</span><input name="leadTimeDays" type="number" min="0" value="${escapeHtml(product.leadTimeDays || 0)}"></label>
-      <label class="field wide"><span>SKU маркетплейсу</span><input name="marketplaceSku" value="${escapeHtml(product.marketplaceSku || "")}" placeholder="Rozetka/Prom/Epicentr/Allo"></label>
+      ${linkedRequisiteInput({ parentType: "product", parentField: "id", fieldKey: "marketplaceSkus", name: "marketplaceSku", label: "SKU маркетплейсу", wide: true, value: product.marketplaceSku || "", placeholder: "Rozetka/Prom/Epicentr/Allo" })}
       <label class="field"><span>Каталог / акція</span><select name="catalogTag">${catalogTagOptions(product.catalogTag || "")}</select></label>
       <label class="field full"><span>Опис / характеристики</span><textarea name="description">${escapeHtml(product.description || "")}</textarea></label>
       <div class="field full">
@@ -8770,7 +15835,7 @@ function clientPayloadFromForm(data) {
   if (!name) throw new Error("Вкажіть назву клієнта.");
   return {
     name,
-    type: data.type,
+    type: data.type || "Marketplace",
     edrpou: data.edrpou,
     phone: data.phone,
     email: data.email,
@@ -8792,7 +15857,7 @@ function ensureClientPortalLoginUnique(login, excludeClientId = "") {
   const normalized = String(login || "").trim().toLowerCase();
   if (!normalized) return;
   if (state.clients.some((client) => client.id !== excludeClientId && String(client.portalLogin || "").trim().toLowerCase() === normalized)) {
-    throw new Error("Такий логін B2B кабінету вже використовується іншим клієнтом.");
+    throw new Error("Такий логін кабінету вже використовується іншим клієнтом.");
   }
 }
 
@@ -8802,10 +15867,28 @@ function createClientCard(form) {
   try {
     const data = clientPayloadFromForm(formData(form));
     const id = `c-${String(Date.now()).slice(-6)}`;
-    data.portalLogin = data.portalLogin || defaultClientLogin({ ...data, id }, state.clients.length);
-    data.portalPassword = data.portalPassword || "1234";
-    ensureClientPortalLoginUnique(data.portalLogin);
-    state.clients.unshift({ id, ...data });
+    if (data.cabinetEnabled) {
+      data.portalLogin = data.portalLogin || defaultClientLogin({ ...data, id }, state.clients.length);
+      data.portalPassword = data.portalPassword || "1234";
+      ensureClientPortalLoginUnique(data.portalLogin);
+    } else {
+      data.portalLogin = "";
+      data.portalPassword = "";
+    }
+    const client = {
+      id,
+      ...data,
+      createdFrom: "crm",
+      sourceType: "crm",
+      sourceName: "CRM",
+      sourceText: "CRM / ручне створення",
+      createdAt: currentTimestamp(),
+      updatedAt: currentTimestamp(),
+      sources: []
+    };
+    normalizeClientRequisites(client);
+    addClientSource(client, { type: "crm", label: "CRM / ручне створення", detail: state.currentManager, date: today });
+    state.clients.unshift(client);
     addAudit(`Додано клієнта ${data.name}`);
     render();
   } catch (error) {
@@ -8819,20 +15902,16 @@ function clientEditorForm(client) {
       <input type="hidden" name="id" value="${escapeHtml(client.id)}">
       <label class="field wide"><span>Назва</span><input name="name" required value="${escapeHtml(client.name || "")}"></label>
       <label class="field"><span>Тип</span><select name="type">${variantOptions("clientTypes", client.type)}</select></label>
-      <label class="field"><span>ЄДРПОУ / ІПН</span><input name="edrpou" value="${escapeHtml(client.edrpou || "")}"></label>
-      <label class="field"><span>Телефон</span><input name="phone" value="${escapeHtml(client.phone || "")}"></label>
-      <label class="field"><span>Email</span><input name="email" type="email" value="${escapeHtml(client.email || "")}"></label>
+      ${linkedRequisiteInput({ parentType: "client", parentField: "id", fieldKey: "edrpous", name: "edrpou", label: "ЄДРПОУ / ІПН", value: client.edrpou || "" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "id", fieldKey: "phones", name: "phone", label: "Телефон", value: client.phone || "" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "id", fieldKey: "emails", name: "email", label: "Email", value: client.email || "" })}
       <label class="field"><span>Менеджер</span><select name="manager">${employeeOptions(client.manager)}</select></label>
       <label class="field"><span>Умови оплат</span><select name="paymentTerms">${variantOptions("paymentTerms", client.paymentTerms)}</select></label>
       <label class="field"><span>Кредитний ліміт</span><input name="creditLimitUAH" value="${escapeHtml(client.creditLimitUAH || 0)}"></label>
       <label class="field"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === (client.currency || "UAH"))).join("")}</select></label>
       <label class="field"><span>Прайс</span><select name="priceType">${priceTypeOptions(client.priceType)}</select></label>
       <label class="field"><span>Податки</span><select name="taxMode">${variantOptions("taxModes", client.taxMode)}</select></label>
-      <label class="field"><span>Кабінет</span><select name="cabinetEnabled">${option("true", "увімкнути", client.cabinetEnabled === true)}${option("false", "не створювати", client.cabinetEnabled !== true)}</select></label>
-      <label class="field"><span>Логін кабінету</span><input name="portalLogin" value="${escapeHtml(client.portalLogin || "")}"></label>
-      <label class="field"><span>Пароль кабінету</span><input name="portalPassword" type="text" value="${escapeHtml(client.portalPassword || "")}"></label>
-      <label class="field"><span>Відп. зберігання</span><select name="responsibleStorage">${option("true", "так", client.responsibleStorage === true)}${option("false", "ні", client.responsibleStorage !== true)}</select></label>
-      <label class="field full"><span>Адреса / доставка</span><textarea name="address">${escapeHtml(client.address || "")}</textarea></label>
+      ${linkedRequisiteInput({ parentType: "client", parentField: "id", fieldKey: "addresses", name: "address", label: "Адреса / доставка", full: true, value: client.address || "" })}
       <button class="primary" type="submit">Зберегти картку клієнта</button>
     </form>
   `;
@@ -8843,12 +15922,11 @@ function openClientCard(id) {
   if (!client) return;
   const invoices = state.invoices.filter((invoice) => invoice.clientId === client.id && isDebtInvoice(invoice));
   const debt = invoices.reduce((sum, invoice) => sum + Math.max(invoice.total - invoice.paid, 0), 0);
-  const storageQty = clientStorageRows(client.id).reduce((sum, row) => sum + row.qty, 0);
   const modal = openModal(`Картка клієнта · ${client.name}`, `
     <section class="grid three compact-metrics">
       <article class="card metric info"><span>Дебіторка</span><strong>${formatMoney(debt, client.currency || "UAH")}</strong><small>${invoices.length} накладних</small></article>
-      <article class="card metric good"><span>Відп. зберігання</span><strong>${storageQty}</strong><small>одиниць на складах клієнта</small></article>
-      <article class="card metric warn"><span>Кабінет</span><strong>${client.cabinetEnabled ? "так" : "ні"}</strong><small>${client.responsibleStorage ? "є відповідальне зберігання" : "без зберігання"}</small></article>
+      <article class="card metric good"><span>Замовлення</span><strong>${state.marketplaceOrders.filter((order) => order.clientId === client.id).length}</strong><small>пов'язані з покупцем</small></article>
+      <article class="card metric warn"><span>Реквізити</span><strong>${linkedRequisiteValues(client, "client", "phones").length + linkedRequisiteValues(client, "client", "emails").length + linkedRequisiteValues(client, "client", "addresses").length}</strong><small>телефони, email та адреси</small></article>
     </section>
     ${clientEditorForm(client)}
   `);
@@ -8867,10 +15945,16 @@ function updateClientCard(form) {
     const client = byId(state.clients, data.id);
     if (!client) throw new Error("Клієнта не знайдено.");
     const payload = clientPayloadFromForm(data);
-    payload.portalLogin = payload.portalLogin || defaultClientLogin({ ...payload, id: client.id }, 0);
-    payload.portalPassword = payload.portalPassword || "1234";
-    ensureClientPortalLoginUnique(payload.portalLogin, client.id);
+    if (payload.cabinetEnabled) {
+      payload.portalLogin = payload.portalLogin || defaultClientLogin({ ...payload, id: client.id }, 0);
+      payload.portalPassword = payload.portalPassword || "1234";
+      ensureClientPortalLoginUnique(payload.portalLogin, client.id);
+    } else {
+      payload.portalLogin = "";
+      payload.portalPassword = "";
+    }
     Object.assign(client, payload);
+    normalizeClientRequisites(client);
     state.warehouses
       .filter((warehouse) => warehouse.kind === "client_responsible" && warehouse.clientId === client.id)
       .forEach((warehouse) => {
@@ -8966,11 +16050,18 @@ function updateRolePermission(target) {
   if (group === "basic") {
     roleItem[key] = target.checked;
   } else {
-    roleItem.access = roleItem.access || { views: {}, documents: {}, posted: {}, fields: {} };
+    roleItem.access = roleItem.access || { views: {}, subviews: {}, documents: {}, posted: {}, fields: {} };
     roleItem.access[group] = roleItem.access[group] || {};
     roleItem.access[group][key] = target.checked;
   }
-  if (roleItem.name === state.currentRole && !canAccessView(state.currentView)) state.currentView = "dashboard";
+  if (roleItem.name === state.currentRole) {
+    if (!canAccessView(state.currentView)) state.currentView = "dashboard";
+    const selectedSubview = state.currentSubViews?.[state.currentView];
+    if (selectedSubview && !canAccessSubview(state.currentView, selectedSubview)) {
+      const firstSubview = subviewsFor(state.currentView)[0];
+      if (firstSubview) state.currentSubViews[state.currentView] = firstSubview[0];
+    }
+  }
   addAudit(`Оновлено право ролі ${roleItem.name}: ${key} = ${target.checked ? "так" : "ні"}`);
   render();
 }
@@ -9257,6 +16348,7 @@ function createExpense(form) {
   const data = formData(form);
   const amount = Number(data.amount || 0);
   if (amount <= 0) return alert("Сума витрати має бути більшою за нуль.");
+  ensureSupplierRecord(data.supplier);
   state.expenses.unshift({
     id: `exp-${String(Date.now()).slice(-6)}`,
     date: data.date,
@@ -9277,6 +16369,7 @@ function createPayable(form) {
   const data = formData(form);
   const amount = Number(data.amount || 0);
   if (amount <= 0) return alert("Сума кредиторки має бути більшою за нуль.");
+  ensureSupplierRecord(data.supplier);
   state.payables.unshift({
     id: `ap-${String(Date.now()).slice(-6)}`,
     supplier: data.supplier,
@@ -9367,6 +16460,7 @@ function updateExpenseDocument(form) {
   expense.currency = data.currency;
   expense.method = data.method;
   expense.supplier = data.supplier;
+  ensureSupplierRecord(expense.supplier);
   expense.manager = data.manager;
   expense.comment = data.comment;
   addAudit(`Змінено проведену витрату ${expense.id}`);
@@ -9399,6 +16493,7 @@ function updatePayableDocument(form) {
   if (!payable) return alert("Кредиторку не знайдено.");
   if (!canEditPostedDocument("payable")) return alert("Поточна роль не має права змінювати проведену кредиторку.");
   payable.supplier = data.supplier;
+  ensureSupplierRecord(payable.supplier);
   payable.article = data.article;
   payable.amount = parseDecimal(data.amount, payable.amount);
   payable.currency = data.currency;
@@ -9428,14 +16523,24 @@ function createMarketplacePublication(form) {
       if (state.marketplacePublications.some((publication) => publication.marketplace === line.marketplace && publication.sku.toLowerCase() === line.sku.toLowerCase())) {
         throw new Error(`Рядок ${index + 1}: SKU ${line.sku} вже існує на ${line.marketplace}.`);
       }
+      addLinkedRequisiteValue(product, "product", "skus", line.sku);
+      const filters = validateMarketplacePublicationRequirements(line, index + 1);
+      const logistics = publicationLogisticsFromLine(line);
       const price = productSalePrice(product, marketplacePriceTypeId());
-      return {
+      const publication = {
         id: uniqueId("pub"),
         marketplace: line.marketplace,
         productId: line.productId,
         sku: line.sku,
         externalId: line.externalId,
         title: line.title || `${product.brand} ${product.model}`,
+        category: {
+          name: line.categoryName || product.category || "",
+          id: line.categoryId || "",
+          groupParam: line.groupParam || ""
+        },
+        filters,
+        logistics,
         price: parseDecimal(line.price || price.amount, product.price || 0),
         currency: line.currency || price.currency || product.currency || "UAH",
         stockQty: productAvailableQty(product.id),
@@ -9444,10 +16549,12 @@ function createMarketplacePublication(form) {
         lastSync: "",
         manager: line.manager || state.currentManager
       };
+      return syncPublicationReadinessFields(publication);
     });
     state.marketplacePublications.unshift(...publications);
     addAudit(`Створено публікацій маркетплейсів: ${publications.length}`);
     marketplacePublicationDraft = { lines: [defaultMarketplacePublicationLine()] };
+    form.closest(".modal-backdrop")?.remove();
     render();
   } catch (error) {
     alert(error.message);
@@ -9455,18 +16562,30 @@ function createMarketplacePublication(form) {
 }
 
 function updateMarketplacePublication(form) {
+  if (!canEditMarketplacePublication()) return alert("Поточна роль не має права змінювати публікації маркетплейсу.");
   const data = formData(form);
   const publication = byId(state.marketplacePublications, data.id);
   if (!publication) return alert("Публікацію не знайдено.");
   publication.marketplace = data.marketplace;
   publication.productId = data.productId;
   publication.sku = data.sku;
+  addLinkedRequisiteValue(byId(state.products, publication.productId), "product", "skus", publication.sku);
   publication.externalId = data.externalId;
   publication.title = data.title;
   publication.price = parseDecimal(data.price, 0);
   publication.currency = data.currency;
+  publication.category = {
+    name: data.categoryName || "",
+    id: data.categoryId || "",
+    groupParam: data.groupParam || ""
+  };
+  publication.filters = publicationFiltersFromLine(data);
+  publication.logistics = publicationLogisticsFromLine(data);
+  publication.stockQty = parseDecimal(data.stockQty, productAvailableQty(publication.productId));
+  publication.photosStatus = data.photosStatus || (publicationLinkedProduct(publication)?.photos?.length ? "ok" : "missing");
   publication.manager = data.manager;
   publication.status = "needs_sync";
+  syncPublicationReadinessFields(publication);
   addAudit(`Оновлено публікацію ${publication.marketplace} · ${publication.sku}`);
   document.querySelector(".modal-backdrop")?.remove();
   render();
@@ -9475,21 +16594,45 @@ function updateMarketplacePublication(form) {
 function editPublication(id) {
   const publication = byId(state.marketplacePublications, id);
   if (!publication) return;
+  if (!canEditMarketplacePublication()) return alert("Поточна роль не має права змінювати публікації маркетплейсу.");
+  const issues = marketplacePublicationMissingFields(publication);
+  const category = publication.category || {};
+  const filters = Array.isArray(publication.filters) ? publication.filters : [];
+  const logistics = publication.logistics || {};
+  const filterLine = (index) => filters[index] || {};
   openModal(`Редагування публікації ${publication.sku}`, `
     <form class="form-grid" data-action="update-marketplace-publication">
       <input type="hidden" name="id" value="${escapeHtml(publication.id)}">
-      <label class="field"><span>Маркетплейс</span><select name="marketplace">${marketplaceNames().map((name) => option(name, name, name === publication.marketplace)).join("")}</select></label>
-      <label class="field wide"><span>Товар</span><select name="productId">${state.products.map((product) => option(product.id, `${product.brand} ${product.model}`, product.id === publication.productId)).join("")}</select></label>
-      <label class="field"><span>SKU</span><input name="sku" value="${escapeHtml(publication.sku)}" required></label>
-      <label class="field"><span>Зовнішній ID</span><input name="externalId" value="${escapeHtml(publication.externalId || "")}"></label>
-      <label class="field wide"><span>Назва</span><input name="title" value="${escapeHtml(publication.title)}" required></label>
-      <label class="field"><span>Ціна</span><input name="price" inputmode="decimal" value="${publication.price}"></label>
-      <label class="field"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === publication.currency)).join("")}</select></label>
-      <label class="field"><span>Менеджер</span><select name="manager">${employeeOptions(publication.manager)}</select></label>
+      ${renderPublicationIssueSummary(publication)}
+      <label class="${publicationFieldClass(issues, ["marketplace"])}"><span>Маркетплейс</span><select name="marketplace">${marketplaceNames().map((name) => option(name, name, name === publication.marketplace)).join("")}</select></label>
+      <label class="${publicationFieldClass(issues, ["productId"], "field wide")}"><span>Товар</span><select name="productId" data-linked-parent="product">${state.products.map((product) => option(product.id, `${product.brand} ${product.model}`, product.id === publication.productId)).join("")}</select></label>
+      ${linkedRequisiteInput({ parentType: "product", parentField: "productId", fieldKey: "skus", name: "sku", label: "SKU", required: true, value: publication.sku || "" })}
+      <label class="${publicationFieldClass(issues, ["externalId"])}"><span>Зовнішній ID</span><input name="externalId" value="${escapeHtml(publication.externalId || "")}"></label>
+      <label class="${publicationFieldClass(issues, ["title"], "field wide")}"><span>Назва</span><input name="title" value="${escapeHtml(publication.title || "")}" required></label>
+      <label class="${publicationFieldClass(issues, ["category"])}"><span>Категорія маркетплейсу</span><input name="categoryName" value="${escapeHtml(category.name || "")}" placeholder="назва категорії"></label>
+      <label class="${publicationFieldClass(issues, ["category"])}"><span>ID категорії</span><input name="categoryId" value="${escapeHtml(category.id || "")}" placeholder="ID категорії"></label>
+      <label class="field"><span>Параметр групування</span><input name="groupParam" value="${escapeHtml(category.groupParam || "")}" placeholder="колір / розмір / модель"></label>
+      <label class="${publicationFieldClass(issues, ["filters"])}"><span>Фільтр 1 назва</span><input name="filter1Name" value="${escapeHtml(filterLine(0).name || "")}" placeholder="бренд"></label>
+      <label class="${publicationFieldClass(issues, ["filters"])}"><span>Фільтр 1 значення</span><input name="filter1Value" value="${escapeHtml(filterLine(0).value || "")}" placeholder="CORE"></label>
+      <label class="${publicationFieldClass(issues, ["filters"])}"><span>Фільтр 2 назва</span><input name="filter2Name" value="${escapeHtml(filterLine(1).name || "")}" placeholder="модель"></label>
+      <label class="${publicationFieldClass(issues, ["filters"])}"><span>Фільтр 2 значення</span><input name="filter2Value" value="${escapeHtml(filterLine(1).value || "")}" placeholder="M16"></label>
+      <label class="${publicationFieldClass(issues, ["filters"])}"><span>Фільтр 3 назва</span><input name="filter3Name" value="${escapeHtml(filterLine(2).name || "")}" placeholder="розмір"></label>
+      <label class="${publicationFieldClass(issues, ["filters"])}"><span>Фільтр 3 значення</span><input name="filter3Value" value="${escapeHtml(filterLine(2).value || "")}" placeholder="5.5 мм"></label>
+      <label class="${publicationFieldClass(issues, ["price"])}"><span>Ціна</span><input name="price" inputmode="decimal" value="${escapeHtml(publication.price || 0)}"></label>
+      <label class="${publicationFieldClass(issues, ["currency"])}"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === publication.currency)).join("")}</select></label>
+      <label class="${publicationFieldClass(issues, ["stockQty"])}"><span>Залишок каналу</span><input name="stockQty" inputmode="decimal" value="${escapeHtml(publication.stockQty ?? productAvailableQty(publication.productId))}"></label>
+      <label class="${publicationFieldClass(issues, ["photos"])}"><span>Фото</span><select name="photosStatus">${option("ok", "є фото", (publication.photosStatus || "") === "ok")}${option("missing", "немає фото", (publication.photosStatus || "") !== "ok")}</select></label>
+      <label class="${publicationFieldClass(issues, ["weightKg"])}"><span>Вага, кг</span><input name="weightKg" inputmode="decimal" value="${escapeHtml(logistics.weightKg || "")}"></label>
+      <label class="${publicationFieldClass(issues, ["dimensions"])}"><span>Довжина, см</span><input name="lengthCm" inputmode="decimal" value="${escapeHtml(logistics.lengthCm || "")}"></label>
+      <label class="${publicationFieldClass(issues, ["dimensions"])}"><span>Ширина, см</span><input name="widthCm" inputmode="decimal" value="${escapeHtml(logistics.widthCm || "")}"></label>
+      <label class="${publicationFieldClass(issues, ["dimensions"])}"><span>Висота, см</span><input name="heightCm" inputmode="decimal" value="${escapeHtml(logistics.heightCm || "")}"></label>
+      <label class="field"><span>Місць</span><input name="cargoPlaces" type="number" min="1" value="${escapeHtml(logistics.cargoPlaces || 1)}"></label>
+      <label class="${publicationFieldClass(issues, ["manager"])}"><span>Менеджер</span><select name="manager">${employeeOptions(publication.manager)}</select></label>
       <button class="primary" type="submit">Зберегти</button>
     </form>
   `);
   attachFieldSuggestions();
+  attachLinkedRequisiteInputs();
 }
 
 function syncPublication(id) {
@@ -9498,8 +16641,17 @@ function syncPublication(id) {
   const product = byId(state.products, publication.productId);
   publication.stockQty = productAvailableQty(publication.productId);
   publication.photosStatus = product?.photos?.length ? "ok" : "missing";
+  const readiness = marketplacePublicationReadiness(publication);
+  if (readiness.danger.length) {
+    publication.status = "needs_sync";
+    syncPublicationReadinessFields(publication);
+    alert(`Публікацію не можна синхронізувати: ${readiness.danger.map((issue) => issue.label).join(", ")}`);
+    render();
+    return;
+  }
   publication.status = "published";
   publication.lastSync = `${today} ${new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })}`;
+  syncPublicationReadinessFields(publication);
   addAudit(`${publication.marketplace}: синхронізовано публікацію ${publication.sku}`, "system");
   render();
 }
@@ -9508,6 +16660,7 @@ function syncMarketplaceStocks() {
   state.marketplacePublications.forEach((publication) => {
     publication.stockQty = productAvailableQty(publication.productId);
     publication.status = "needs_sync";
+    syncPublicationReadinessFields(publication);
   });
   addAudit("Оновлено залишки для відправки на маркетплейси", "system");
   render();
@@ -9521,6 +16674,7 @@ function syncMarketplacePrices() {
     publication.price = Math.round(uah(price.amount, price.currency));
     publication.currency = "UAH";
     publication.status = "needs_sync";
+    syncPublicationReadinessFields(publication);
   });
   addAudit("Оновлено ціни публікацій по поточному курсу CRM", state.currentManager);
   render();
@@ -9547,14 +16701,18 @@ function importMarketplaceCatalog(form) {
       const existing = state.marketplacePublications.find((publication) => publication.marketplace === row.marketplace && publication.sku === row.sku);
       if (existing) {
         Object.assign(existing, { ...row, status: "needs_sync" });
+        syncPublicationReadinessFields(existing);
       } else {
-        state.marketplacePublications.unshift({
+        state.marketplacePublications.unshift(syncPublicationReadinessFields({
           id: uniqueId("pub"),
           marketplace: row.marketplace,
           productId: row.productId,
           sku: row.sku,
           externalId: row.externalId || "",
           title: row.title || row.sku,
+          category: row.category || { name: row.categoryName || "", id: row.categoryId || "", groupParam: row.groupParam || "" },
+          filters: Array.isArray(row.filters) ? row.filters : [],
+          logistics: row.logistics || {},
           price: Number(row.price || 0),
           currency: row.currency || "UAH",
           stockQty: Number(row.stockQty || 0),
@@ -9562,7 +16720,7 @@ function importMarketplaceCatalog(form) {
           photosStatus: row.photosStatus || "unknown",
           lastSync: "",
           manager: row.manager || state.currentManager
-        });
+        }));
       }
     });
     addAudit(`Імпортовано публікацій маркетплейсів: ${rows.length}`, "system");
@@ -9576,7 +16734,7 @@ function importDemoMarketplaceOrder() {
   const publication = state.marketplacePublications[0];
   if (!publication) return alert("Спочатку створіть публікацію.");
   const stamp = String(Date.now()).slice(-5);
-  state.marketplaceOrders.unshift({
+  const order = normalizeMarketplaceOrder({
     id: uniqueId("mpo"),
     marketplace: publication.marketplace,
     externalOrderId: `${publication.marketplace.slice(0, 2).toUpperCase()}-${today.replaceAll("-", "")}-${stamp}`,
@@ -9596,13 +16754,17 @@ function importDemoMarketplaceOrder() {
     clientId: "",
     invoiceId: ""
   });
+  state.marketplaceOrders.unshift(order);
+  runMarketplaceOrderAutomation(order, { audit: true });
   addAudit(`${publication.marketplace}: нове замовлення передано менеджеру ${publication.manager || state.currentManager}`, "system");
   render();
 }
 
 function ensureClientFromMarketplaceOrder(order) {
   const buyer = marketplaceOrderBuyer(order);
-  let client = state.clients.find((item) => item.phone && item.phone === buyer.phone) || state.clients.find((item) => item.email && item.email === buyer.email);
+  const sourceOrderId = order.externalOrderId || order.id || "";
+  const sourceLabel = `${order.marketplace || "Маркетплейс"} / замовлення`;
+  let client = byId(state.clients, order.clientId) || findClientByBuyer(buyer, order.manager);
   if (!client) {
     client = {
       id: uniqueId("c"),
@@ -9619,10 +16781,29 @@ function ensureClientFromMarketplaceOrder(order) {
       currency: order.currency,
       taxMode: "роздріб",
       responsibleStorage: false,
-      address: buyer.address || ""
+      address: buyer.address || "",
+      createdFrom: "marketplace_order",
+      sourceType: "marketplace_order",
+      sourceName: sourceLabel,
+      sourceOrderId,
+      sourceText: `${sourceLabel}${sourceOrderId ? ` · ${sourceOrderId}` : ""}`,
+      createdAt: currentTimestamp(),
+      updatedAt: currentTimestamp(),
+      sources: []
     };
-    state.clients.unshift(client);
+    state.clients.unshift(normalizeClientRequisites(client));
+  } else {
+    client.name = client.name || buyer.name;
+    client.manager = client.manager || order.manager;
+    client.edrpou = client.edrpou || buyer.edrpou || "";
+    client.phone = client.phone || buyer.phone || "";
+    client.email = client.email || buyer.email || "";
+    client.address = client.address || buyer.address || "";
+    client.currency = client.currency || order.currency || "UAH";
+    client.updatedAt = currentTimestamp();
   }
+  attachBuyerRequisitesToClient(client, buyer);
+  addClientSource(client, { type: "marketplace_order", label: sourceLabel, detail: sourceOrderId, orderId: sourceOrderId, date: order.date || today });
   order.clientId = client.id;
   return client;
 }
@@ -9645,65 +16826,224 @@ function createClientFromOrder(id) {
   render();
 }
 
+function createMarketplaceOrder(form) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права створювати замовлення маркетплейсу.");
+  try {
+    const data = formData(form);
+    const lines = collectMarketplaceOrderLinesFromForm(form);
+    if (!lines.length) throw new Error("Додайте хоча б один товар до замовлення.");
+    lines.forEach((line, index) => {
+      const lineProduct = byId(state.products, line.productId);
+      if (!lineProduct) throw new Error(`Рядок ${index + 1}: оберіть товар для замовлення.`);
+      if (!Number(line.qty || 0)) throw new Error(`Рядок ${index + 1}: вкажіть кількість.`);
+      addLinkedRequisiteValue(lineProduct, "product", "skus", line.sku);
+    });
+    const firstLine = lines[0];
+    const product = byId(state.products, firstLine.productId);
+    const orderCurrency = firstLine.currency || product?.currency || data.currency || "UAH";
+    const orderTotal = lines.reduce((sum, line) => sum + marketplaceOrderLineTotal(line, orderCurrency), 0);
+    const selectedClient = linkedParentById("client", data.buyerClientId);
+    if (selectedClient) {
+      data.buyerName = data.buyerName || selectedClient.name || "";
+      data.buyerPhone = data.buyerPhone || linkedRequisiteValues(selectedClient, "client", "phones")[0] || "";
+      data.buyerEmail = data.buyerEmail || linkedRequisiteValues(selectedClient, "client", "emails")[0] || "";
+      data.buyerEdrpou = data.buyerEdrpou || linkedRequisiteValues(selectedClient, "client", "edrpous")[0] || "";
+      data.buyerAddress = data.buyerAddress || linkedRequisiteValues(selectedClient, "client", "addresses")[0] || "";
+    }
+    if (!String(data.buyerName || "").trim()) throw new Error("Вкажіть покупця.");
+    if (!String(data.buyerPhone || "").trim()) throw new Error("Вкажіть телефон покупця.");
+
+    const marketplace = data.marketplace || marketplaceNames()[0] || "Marketplace";
+    const externalOrderId = String(data.externalOrderId || "").trim() || `CRM-${today.replaceAll("-", "")}-${String(Date.now()).slice(-6)}`;
+    if (state.marketplaceOrders.some((order) => order.marketplace === marketplace && order.externalOrderId === externalOrderId)) {
+      throw new Error(`Замовлення ${externalOrderId} вже існує для ${marketplace}.`);
+    }
+
+    const paymentStatus = data.paymentStatus || "expected";
+    const paymentAmount = data.paymentAmount === "" || data.paymentAmount === undefined
+      ? orderTotal
+      : parseDecimal(data.paymentAmount, orderTotal);
+    const order = normalizeMarketplaceOrder({
+      id: uniqueId("mpo"),
+      marketplace,
+      externalOrderId,
+      date: data.date || today,
+      status: data.status || "new_order",
+      productId: firstLine.productId,
+      sku: firstLine.sku || productPrimarySku(product) || product.id,
+      qty: Number(firstLine.qty || 1),
+      price: Number(firstLine.price || 0),
+      currency: orderCurrency,
+      lines: lines.map((line, index) => ({ ...line, id: line.id || `line-${index + 1}`, currency: line.currency || orderCurrency })),
+      buyer: {
+        name: data.buyerName || "",
+        phone: data.buyerPhone || "",
+        email: data.buyerEmail || "",
+        edrpou: data.buyerEdrpou || "",
+        address: data.buyerAddress || ""
+      },
+      delivery: {
+        service: data.deliveryService || "",
+        city: data.deliveryCity || "",
+        warehouse: data.deliveryWarehouse || "",
+        ttn: data.deliveryTtn || "",
+        status: data.deliveryStatus || "new",
+        apiStatus: "Створено вручну в CRM"
+      },
+      payment: {
+        status: paymentStatus,
+        amount: paymentAmount,
+        source: data.paymentSource || "Ручне замовлення CRM",
+        method: data.paymentMethod || "Маркетплейс",
+        paidAt: paymentStatus === "paid" ? (data.date || today) : ""
+      },
+      dates: { created: data.date || today },
+      manager: data.manager || state.currentManager,
+      clientId: selectedClient?.id || "",
+      manual: true,
+      source: "CRM"
+    });
+    runMarketplaceOrderAutomation(order, { audit: true });
+    state.marketplaceOrders.unshift(order);
+    addAudit(`Вручну створено замовлення ${order.externalOrderId}`);
+    form.closest(".modal-backdrop")?.remove();
+    render();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 function editMarketplaceOrderDocument(id) {
   const order = byId(state.marketplaceOrders, id);
   if (!order) return;
-  if (!canEditPostedDocument("marketplaceOrder")) return alert("Поточна роль не має права змінювати проведені замовлення маркетплейсів.");
+  if (!canEditMarketplaceOrder()) return alert("Поточна роль не має права змінювати замовлення маркетплейсів.");
   const delivery = order.delivery || {};
   const payment = order.payment || {};
-  const dates = { created: order.date || today, agreed: "", warehouse: "", delivery: "", delivered: "", paid: "", ...(order.dates || {}) };
+  if (order.status === "new_order" && canEditMarketplaceOrder()) {
+    setMarketplaceOrderWorkflowStage(order, "in_progress", { nextAction: salesFunnelStage("in_progress").reminder });
+    addAudit(`Замовлення ${order.externalOrderId} взято в роботу менеджером ${state.currentManager}`);
+    saveState();
+  }
+  const dates = {
+    created: order.date || today,
+    inProgress: "",
+    waitingClient: "",
+    agreed: "",
+    paymentWaiting: "",
+    warehouse: "",
+    picked: "",
+    delivery: "",
+    delivered: "",
+    completed: "",
+    paid: "",
+    upsell: "",
+    aftersale: "",
+    repeat: "",
+    cancelled: "",
+    ...(order.dates || {})
+  };
+  const issues = marketplaceOrderMissingFields(order);
+  const linkedClient = marketplaceOrderLinkedClient(order);
   openModal(`Зміна замовлення ${order.externalOrderId}`, `
+    ${renderMarketplaceOrderControlActions(order)}
+    ${renderOrderStatusRuleCard(order)}
+    ${renderOrderIssueSummary(order)}
     <form class="form-grid" data-action="update-marketplace-order">
       <input type="hidden" name="id" value="${escapeHtml(order.id)}">
-      <label class="field"><span>Дата замовлення</span><input name="date" type="date" value="${escapeHtml(order.date || today)}"></label>
-      <label class="field"><span>Маркетплейс</span><select name="marketplace">${marketplaceNames().map((name) => option(name, name, name === order.marketplace)).join("")}</select></label>
-      <label class="field"><span>Статус</span><select name="status">${MARKETPLACE_ORDER_STATUSES.map((item) => option(item.id, item.label, item.id === order.status)).join("")}</select></label>
-      <label class="field"><span>Менеджер</span><select name="manager">${employeeOptions(order.manager)}</select></label>
-      <label class="field wide"><span>Товар</span><select name="productId">${state.products.map((product) => option(product.id, `${product.brand} ${product.model}`, product.id === order.productId)).join("")}</select></label>
-      <label class="field"><span>SKU</span><input name="sku" value="${escapeHtml(order.sku || "")}"></label>
-      <label class="field"><span>Кількість</span><input name="qty" type="number" min="1" value="${order.qty || 1}"></label>
-      <label class="field"><span>Ціна</span><input name="price" inputmode="decimal" value="${escapeHtml(order.price || 0)}"></label>
-      <label class="field"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === order.currency)).join("")}</select></label>
-      <label class="field"><span>Покупець</span><input name="buyerName" value="${escapeHtml(order.buyer?.name || "")}"></label>
-      <label class="field"><span>Телефон</span><input name="buyerPhone" value="${escapeHtml(order.buyer?.phone || "")}"></label>
-      <label class="field"><span>Email</span><input name="buyerEmail" value="${escapeHtml(order.buyer?.email || "")}"></label>
-      <label class="field"><span>ЄДРПОУ / ІПН</span><input name="buyerEdrpou" value="${escapeHtml(order.buyer?.edrpou || "")}"></label>
-      <label class="field full"><span>Адреса покупця</span><input name="buyerAddress" value="${escapeHtml(order.buyer?.address || "")}"></label>
-      <label class="field"><span>Служба доставки</span><select name="deliveryService">${variantOptions("delivery", delivery.service)}</select></label>
-      <label class="field"><span>Місто</span><input name="deliveryCity" value="${escapeHtml(delivery.city || "")}"></label>
-      <label class="field"><span>Відділення</span><input name="deliveryWarehouse" value="${escapeHtml(delivery.warehouse || "")}"></label>
-      <label class="field"><span>ТТН</span><input name="deliveryTtn" value="${escapeHtml(delivery.ttn || "")}"></label>
-      <label class="field"><span>Статус доставки</span><select name="deliveryStatus">${["new", "sent_to_warehouse", "sent_to_delivery", "delivered"].map((status) => option(status, marketplaceDeliveryStatusPill(status).replace(/<[^>]+>/g, ""), status === delivery.status)).join("")}</select></label>
-      <label class="field"><span>Статус оплати</span><select name="paymentStatus">${["expected", "pending", "paid", "failed"].map((status) => option(status, marketplacePaymentStatusPill(status).replace(/<[^>]+>/g, ""), status === payment.status)).join("")}</select></label>
-      <label class="field"><span>Сума оплати</span><input name="paymentAmount" inputmode="decimal" value="${escapeHtml(payment.amount || order.qty * order.price || 0)}"></label>
-      <label class="field"><span>Джерело оплати</span><input name="paymentSource" value="${escapeHtml(payment.source || "")}"></label>
-      <label class="field"><span>Метод оплати</span><input name="paymentMethod" value="${escapeHtml(payment.method || "")}"></label>
-      <label class="field"><span>Створено</span><input name="createdDate" type="date" value="${escapeHtml(dates.created || "")}"></label>
-      <label class="field"><span>Погоджено</span><input name="agreedDate" type="date" value="${escapeHtml(dates.agreed || "")}"></label>
-      <label class="field"><span>На склад</span><input name="warehouseDate" type="date" value="${escapeHtml(dates.warehouse || "")}"></label>
-      <label class="field"><span>На доставку</span><input name="deliveryDate" type="date" value="${escapeHtml(dates.delivery || "")}"></label>
-      <label class="field"><span>Вручено</span><input name="deliveredDate" type="date" value="${escapeHtml(dates.delivered || "")}"></label>
-      <label class="field"><span>Оплачено</span><input name="paidDate" type="date" value="${escapeHtml(dates.paid || payment.paidAt || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date"])}"><span>Дата замовлення</span><input name="date" type="date" value="${escapeHtml(order.date || today)}"></label>
+      <label class="${orderFieldClass(issues, ["marketplace"])}"><span>Маркетплейс</span><select name="marketplace">${marketplaceNames().map((name) => option(name, name, name === order.marketplace)).join("")}</select></label>
+      <label class="field"><span>Статус</span><select name="status">${marketplaceOrderStatusOptions(order.status)}</select></label>
+      <label class="${orderFieldClass(issues, ["manager"])}"><span>Менеджер</span><select name="manager">${employeeOptions(order.manager)}</select></label>
+      <div class="full" hidden data-marketplace-order-primary-legacy>
+        <label class="${orderFieldClass(issues, ["productId"], "field wide")}"><span>Товар</span><select name="productId" data-linked-parent="product">${state.products.map((product) => option(product.id, `${product.brand} ${product.model}`, product.id === order.productId)).join("")}</select></label>
+        ${linkedRequisiteInput({ parentType: "product", parentField: "productId", fieldKey: "skus", name: "sku", label: "SKU", value: order.sku || "" })}
+        <label class="${orderFieldClass(issues, ["qty"])}"><span>Кількість</span><input name="qty" type="number" min="1" value="${order.qty || 1}"></label>
+        <label class="${orderFieldClass(issues, ["price"])}"><span>Ціна</span><input name="price" inputmode="decimal" value="${escapeHtml(order.price || 0)}"></label>
+        <label class="${orderFieldClass(issues, ["currency"])}"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === order.currency)).join("")}</select></label>
+      </div>
+      ${renderMarketplaceOrderLinesForm(order)}
+      <label class="${orderFieldClass(issues, ["buyerName"], "field wide")}"><span>Покупець CRM</span><select name="buyerClientId" data-linked-parent="client" data-linked-name-target="buyerName">${linkedParentOptions("client", linkedClient?.id || order.clientId || "", "Новий покупець / не обрано")}</select></label>
+      <label class="${orderFieldClass(issues, ["buyerName"])}"><span>Покупець</span><input name="buyerName" value="${escapeHtml(order.buyer?.name || "")}"></label>
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "phones", name: "buyerPhone", label: "Телефон", required: true, value: order.buyer?.phone || "" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "emails", name: "buyerEmail", label: "Email", value: order.buyer?.email || "" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "edrpous", name: "buyerEdrpou", label: "ЄДРПОУ / ІПН", value: order.buyer?.edrpou || "" })}
+      ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "addresses", name: "buyerAddress", label: "Адреса покупця", full: true, value: order.buyer?.address || "" })}
+      <label class="${orderFieldClass(issues, ["deliveryService"])}"><span>Служба доставки</span><select name="deliveryService">${variantOptions("delivery", delivery.service)}</select></label>
+      <label class="${orderFieldClass(issues, ["deliveryCity"])}"><span>Місто</span><input name="deliveryCity" value="${escapeHtml(delivery.city || "")}"></label>
+      <label class="${orderFieldClass(issues, ["deliveryAddress"])}"><span>Відділення</span><input name="deliveryWarehouse" value="${escapeHtml(delivery.warehouse || "")}"></label>
+      <label class="${orderFieldClass(issues, ["deliveryTtn"])}"><span>ТТН</span><input name="deliveryTtn" value="${escapeHtml(delivery.ttn || "")}"></label>
+      <label class="field"><span>Статус доставки</span><select name="deliveryStatus">${deliveryStatusOptions(delivery.status || "new")}</select></label>
+      <label class="${orderFieldClass(issues, ["paymentStatus"])}"><span>Статус оплати</span><select name="paymentStatus">${["expected", "pending", "paid", "failed"].map((status) => option(status, marketplacePaymentStatusPill(status).replace(/<[^>]+>/g, ""), status === payment.status)).join("")}</select></label>
+      <label class="${orderFieldClass(issues, ["paymentAmount"])}"><span>Сума оплати</span><input name="paymentAmount" inputmode="decimal" value="${escapeHtml(payment.amount || marketplaceOrderTotal(order) || 0)}"></label>
+      <label class="${orderFieldClass(issues, ["paymentSource"])}"><span>Джерело оплати</span><input name="paymentSource" value="${escapeHtml(payment.source || "")}"></label>
+      <label class="${orderFieldClass(issues, ["paymentMethod"])}"><span>Метод оплати</span><input name="paymentMethod" value="${escapeHtml(payment.method || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:created"])}"><span>Створено</span><input name="createdDate" type="date" value="${escapeHtml(dates.created || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:inProgress"])}"><span>В роботі</span><input name="inProgressDate" type="date" value="${escapeHtml(dates.inProgress || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:waitingClient"])}"><span>Очікує клієнта</span><input name="waitingClientDate" type="date" value="${escapeHtml(dates.waitingClient || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:agreed"])}"><span>Погоджено</span><input name="agreedDate" type="date" value="${escapeHtml(dates.agreed || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:paymentWaiting"])}"><span>Очікує оплату</span><input name="paymentWaitingDate" type="date" value="${escapeHtml(dates.paymentWaiting || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:warehouse"])}"><span>На склад</span><input name="warehouseDate" type="date" value="${escapeHtml(dates.warehouse || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:picked"])}"><span>Зібрано</span><input name="pickedDate" type="date" value="${escapeHtml(dates.picked || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:delivery"])}"><span>На доставку</span><input name="deliveryDate" type="date" value="${escapeHtml(dates.delivery || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:delivered"])}"><span>Вручено</span><input name="deliveredDate" type="date" value="${escapeHtml(dates.delivered || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:completed"])}"><span>Завершено</span><input name="completedDate" type="date" value="${escapeHtml(dates.completed || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:paid"])}"><span>Оплачено</span><input name="paidDate" type="date" value="${escapeHtml(dates.paid || payment.paidAt || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:upsell"])}"><span>Апсел</span><input name="upsellDate" type="date" value="${escapeHtml(dates.upsell || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:aftersale"])}"><span>Follow-up</span><input name="aftersaleDate" type="date" value="${escapeHtml(dates.aftersale || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:repeat"])}"><span>Повторний продаж</span><input name="repeatDate" type="date" value="${escapeHtml(dates.repeat || "")}"></label>
+      <label class="${orderFieldClass(issues, ["date:cancelled"])}"><span>Скасовано</span><input name="cancelledDate" type="date" value="${escapeHtml(dates.cancelled || "")}"></label>
       <p class="notice warn small full">Якщо накладна вже створена, зміна товару, кількості або ціни у замовленні не змінює проведену накладну. Для цього використовуйте зміну накладної або коригування.</p>
       <button class="primary" type="submit">Зберегти замовлення</button>
     </form>
   `);
 }
 
+function refreshMarketplaceOrderAfterAction(id) {
+  const form = document.querySelector('.modal-backdrop [data-action="update-marketplace-order"]');
+  const shouldRefreshModal = form?.elements?.id?.value === id;
+  if (shouldRefreshModal) {
+    form.closest(".modal-backdrop")?.remove();
+    render();
+    editMarketplaceOrderDocument(id);
+    return;
+  }
+  render();
+}
+
 function updateMarketplaceOrderDocument(form) {
   const data = formData(form);
   const order = byId(state.marketplaceOrders, data.id);
   if (!order) return alert("Замовлення маркетплейсу не знайдено.");
-  if (!canEditPostedDocument("marketplaceOrder")) return alert("Поточна роль не має права змінювати проведені замовлення маркетплейсів.");
+  if (!canEditMarketplaceOrder()) return alert("Поточна роль не має права змінювати замовлення маркетплейсів.");
+  const previousStatus = order.status;
+  const lines = collectMarketplaceOrderLinesFromForm(form);
+  if (!lines.length) return alert("Додайте хоча б один товар до замовлення.");
+  for (const [index, line] of lines.entries()) {
+    const lineProduct = byId(state.products, line.productId);
+    if (!lineProduct) return alert(`Рядок ${index + 1}: товар не знайдено.`);
+    if (!Number(line.qty || 0)) return alert(`Рядок ${index + 1}: вкажіть кількість.`);
+    addLinkedRequisiteValue(lineProduct, "product", "skus", line.sku);
+  }
+  const firstLine = lines[0];
   order.date = data.date || order.date;
   order.marketplace = data.marketplace;
-  order.status = data.status;
+  order.status = normalizeMarketplaceOrderStatus(data.status);
   order.manager = data.manager;
-  order.productId = data.productId;
-  order.sku = data.sku;
-  order.qty = Number(data.qty || 1);
-  order.price = Number(data.price || 0);
-  order.currency = data.currency;
+  order.productId = firstLine.productId;
+  order.sku = firstLine.sku;
+  order.qty = Number(firstLine.qty || 1);
+  order.price = Number(firstLine.price || 0);
+  order.currency = firstLine.currency || data.currency || order.currency || "UAH";
+  order.lines = lines.map((line, index) => ({ ...line, id: line.id || `line-${index + 1}`, currency: line.currency || order.currency }));
+  const orderTotal = marketplaceOrderTotal(order);
+  const selectedClient = linkedParentById("client", data.buyerClientId);
+  if (selectedClient) {
+    data.buyerName = data.buyerName || selectedClient.name || "";
+    data.buyerPhone = data.buyerPhone || linkedRequisiteValues(selectedClient, "client", "phones")[0] || "";
+    data.buyerEmail = data.buyerEmail || linkedRequisiteValues(selectedClient, "client", "emails")[0] || "";
+    data.buyerEdrpou = data.buyerEdrpou || linkedRequisiteValues(selectedClient, "client", "edrpous")[0] || "";
+    data.buyerAddress = data.buyerAddress || linkedRequisiteValues(selectedClient, "client", "addresses")[0] || "";
+  }
   order.buyer = {
     name: data.buyerName || "",
     phone: data.buyerPhone || "",
@@ -9711,6 +17051,8 @@ function updateMarketplaceOrderDocument(form) {
     edrpou: data.buyerEdrpou || "",
     address: data.buyerAddress || ""
   };
+  order.clientId = selectedClient?.id || "";
+  if (selectedClient) attachBuyerRequisitesToClient(selectedClient, order.buyer);
   order.delivery = {
     ...(order.delivery || {}),
     service: data.deliveryService,
@@ -9723,24 +17065,58 @@ function updateMarketplaceOrderDocument(form) {
   order.payment = {
     ...(order.payment || {}),
     status: data.paymentStatus,
-    amount: Number(data.paymentAmount || 0),
+    amount: data.paymentAmount === "" || data.paymentAmount === undefined ? orderTotal : parseDecimal(data.paymentAmount, orderTotal),
     source: data.paymentSource || "",
     method: data.paymentMethod || "",
     paidAt: data.paidDate || order.payment?.paidAt || ""
   };
   order.dates = {
     created: data.createdDate || order.date,
+    inProgress: data.inProgressDate || "",
+    waitingClient: data.waitingClientDate || "",
     agreed: data.agreedDate || "",
+    paymentWaiting: data.paymentWaitingDate || "",
     warehouse: data.warehouseDate || "",
+    picked: data.pickedDate || "",
     delivery: data.deliveryDate || "",
     delivered: data.deliveredDate || "",
-    paid: data.paidDate || ""
+    completed: data.completedDate || "",
+    paid: data.paidDate || "",
+    upsell: data.upsellDate || "",
+    aftersale: data.aftersaleDate || "",
+    repeat: data.repeatDate || "",
+    cancelled: data.cancelledDate || ""
   };
-  if (order.status === "paid" && order.payment.status !== "paid") order.payment.status = "paid";
+  const changedDateKey = funnelDateKey(order.status);
+  if (previousStatus !== order.status && changedDateKey && !order.dates[changedDateKey]) order.dates[changedDateKey] = today;
+  if (order.status === "waiting_payment" && order.payment.status === "expected") order.payment.status = "pending";
+  if (statusAtLeast(order.status, "paid") && order.status !== "cancelled" && order.payment.status !== "paid") order.payment.status = "paid";
   if (order.payment.status === "paid" && !order.dates.paid) order.dates.paid = today;
+  if (order.payment.status === "paid" && !statusAtLeast(order.status, "paid")) order.status = "paid";
+  const stage = salesFunnelStage(order.status);
+  const stageStartedAt = previousStatus !== order.status
+    ? nowIso()
+    : (order.workflow?.stageStartedAt || dateToIso(order.dates[funnelDateKey(order.status)] || order.date || today));
+  order.workflow = {
+    ...(order.workflow || {}),
+    stage: order.status,
+    stageStartedAt,
+    reminderAt: addHoursIso(stageStartedAt, stage.slaHours),
+    nextAction: stage.reminder
+  };
   addAudit(`Змінено замовлення маркетплейсу ${order.externalOrderId}`);
   document.querySelector(".modal-backdrop")?.remove();
   render();
+}
+
+function waitMarketplaceClientConfirmation(id) {
+  if (!canChangeMarketplaceOrderStatus()) return alert("Поточна роль не має права змінювати статус замовлення маркетплейсу.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (order.status === "cancelled") return alert("Скасоване замовлення не можна переводити в очікування клієнта.");
+  setMarketplaceOrderWorkflowStage(order, "waiting_client");
+  addAudit(`Замовлення ${order.externalOrderId} переведено в очікування підтвердження клієнта`);
+  refreshMarketplaceOrderAfterAction(order.id);
 }
 
 function agreeMarketplaceOrder(id) {
@@ -9748,24 +17124,58 @@ function agreeMarketplaceOrder(id) {
   const order = byId(state.marketplaceOrders, id);
   if (!order) return;
   ensureClientFromMarketplaceOrder(order);
-  order.status = "agreed";
-  order.dates = { created: order.date || today, agreed: today, warehouse: "", delivery: "", delivered: "", paid: "", ...(order.dates || {}), agreed: today };
+  setMarketplaceOrderWorkflowStage(order, "confirmed_by_client");
   addAudit(`Замовлення ${order.externalOrderId} узгоджено з покупцем`);
-  render();
+  refreshMarketplaceOrderAfterAction(order.id);
+}
+
+function waitMarketplacePayment(id) {
+  if (!canChangeMarketplaceOrderStatus()) return alert("Поточна роль не має права змінювати статус замовлення маркетплейсу.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!statusAtLeast(order.status, "confirmed_by_client") || order.status === "cancelled") return alert("Спочатку підтвердіть замовлення з клієнтом.");
+  setMarketplaceOrderWorkflowStage(order, "waiting_payment");
+  order.payment = {
+    ...(order.payment || {}),
+    status: order.payment?.status === "paid" ? "paid" : "pending",
+    apiStatus: order.payment?.status === "paid" ? "Оплата вже підтверджена" : "Очікує оплату або перевірку"
+  };
+  addAudit(`Замовлення ${order.externalOrderId} очікує оплату`);
+  refreshMarketplaceOrderAfterAction(order.id);
 }
 
 function sendMarketplaceOrderToWarehouse(id) {
-  if (!canChangeMarketplaceOrderStatus()) return alert("Поточна роль не має права передавати замовлення на склад.");
+  if (!canSendMarketplaceOrderToWarehouse()) return alert("Поточна роль не має права передавати замовлення на склад.");
   const order = byId(state.marketplaceOrders, id);
   if (!order) return;
-  if (order.status === "new_order") return alert("Спочатку погодьте замовлення з покупцем.");
-  order.status = "sent_to_warehouse";
+  if (!statusAtLeast(order.status, "confirmed_by_client") || order.status === "cancelled") return alert("Спочатку підтвердіть замовлення з клієнтом.");
+  order.delivery = { ...(order.delivery || {}) };
+  order.warehouseFlow = { ...(order.warehouseFlow || {}) };
+  setMarketplaceOrderWorkflowStage(order, "picking");
   order.warehouseStatus = "reserved";
-  order.dates = { created: order.date || today, agreed: order.dates?.agreed || today, warehouse: today, delivery: "", delivered: "", paid: order.dates?.paid || "", ...(order.dates || {}), warehouse: today };
   order.delivery.status = order.delivery.status === "delivered" ? "delivered" : "sent_to_warehouse";
   order.delivery.apiStatus = "Замовлення передано на склад для комплектації";
+  order.warehouseFlow.warehouseSentAt = currentTimestamp();
+  order.warehouseFlow.warehouseSentBy = state.currentManager;
   addAudit(`Замовлення ${order.externalOrderId} передано на склад`);
-  render();
+  refreshMarketplaceOrderAfterAction(order.id);
+}
+
+function markMarketplacePicked(id) {
+  if (!canConfirmMarketplacePicking()) return alert("Поточна роль не має права підтверджувати комплектацію замовлення.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!statusAtLeast(order.status, "picking") || order.status === "cancelled") return alert("Спочатку передайте замовлення на комплектацію.");
+  order.delivery = { ...(order.delivery || {}) };
+  order.warehouseFlow = { ...(order.warehouseFlow || {}) };
+  setMarketplaceOrderWorkflowStage(order, "picked");
+  order.warehouseStatus = "picked";
+  order.delivery.status = order.delivery.status === "delivered" ? "delivered" : "picked";
+  order.delivery.apiStatus = "Завскладом підтвердив відбірку";
+  order.warehouseFlow.pickingConfirmedAt = currentTimestamp();
+  order.warehouseFlow.pickingConfirmedBy = state.currentManager;
+  addAudit(`Завскладом підтвердив відбірку ${order.externalOrderId}`);
+  refreshMarketplaceOrderAfterAction(order.id);
 }
 
 function marketplaceTtnPrefix(service = "") {
@@ -9780,37 +17190,512 @@ function generateMarketplaceTtn(order) {
   return `${marketplaceTtnPrefix(order.delivery?.service)}-${today.replaceAll("-", "")}-${String(Date.now()).slice(-6)}`;
 }
 
-function sendMarketplaceOrderToDelivery(id) {
-  if (!canTrackMarketplaceDelivery()) return alert("Поточна роль не має права передавати замовлення в доставку.");
+function handoverMarketplaceOrderToDelivery(id) {
+  if (!canHandoverMarketplaceOrderToLogistics()) return alert("Поточна роль не має права передавати замовлення логісту.");
   const order = byId(state.marketplaceOrders, id);
   if (!order) return;
-  if (order.status === "new_order") return alert("Спочатку погодьте замовлення.");
-  order.status = "sent_to_delivery";
-  order.delivery.status = "sent_to_delivery";
+  if (!statusAtLeast(order.status, "picked") || order.status === "cancelled") return alert("Спочатку завскладом має підтвердити відбірку.");
+  order.delivery = { ...(order.delivery || {}) };
+  order.warehouseFlow = { ...(order.warehouseFlow || {}) };
+  order.delivery.status = "warehouse_handover";
   order.delivery.ttn = order.delivery.ttn || generateMarketplaceTtn(order);
-  order.delivery.apiStatus = "Передано перевізнику, очікує перший скан";
-  order.delivery.lastCheck = currentTimestamp();
-  order.dates = { created: order.date || today, agreed: order.dates?.agreed || today, warehouse: order.dates?.warehouse || today, delivery: today, delivered: "", paid: order.dates?.paid || "", ...(order.dates || {}), delivery: today };
-  addAudit(`Замовлення ${order.externalOrderId} передано на доставку, ТТН ${order.delivery.ttn}`, "system");
-  render();
+  order.delivery.apiStatus = "Склад передав замовлення логісту, очікує підтвердження логіста";
+  order.warehouseFlow.deliveryHandoverAt = currentTimestamp();
+  order.warehouseFlow.deliveryHandoverBy = state.currentManager;
+  addAudit(`Замовлення ${order.externalOrderId} передано логісту, ТТН ${order.delivery.ttn}`, "system");
+  refreshMarketplaceOrderAfterAction(order.id);
 }
 
-function trackMarketplaceDelivery(id) {
+function sendMarketplaceOrderToDelivery(id) {
+  if (!canAcceptMarketplaceOrderLogistics()) return alert("Поточна роль не має права передавати замовлення в доставку.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!statusAtLeast(order.status, "picked") || order.status === "cancelled") return alert("Спочатку завскладом має підтвердити відбірку.");
+  order.delivery = { ...(order.delivery || {}) };
+  order.warehouseFlow = { ...(order.warehouseFlow || {}) };
+  if (order.delivery.status !== "warehouse_handover") return alert("Спочатку склад має передати замовлення логісту.");
+  setMarketplaceOrderWorkflowStage(order, "shipped");
+  order.delivery.status = "logistics_accepted";
+  order.delivery.ttn = order.delivery.ttn || generateMarketplaceTtn(order);
+  order.delivery.trackingProvider = deliveryProviderKey(order.delivery.service || "");
+  order.delivery.apiStatus = "Логіст підтвердив передачу, готово до API-трекінгу";
+  order.delivery.lastCheck = currentTimestamp();
+  order.warehouseFlow.logisticsAcceptedAt = currentTimestamp();
+  order.warehouseFlow.logisticsAcceptedBy = state.currentManager;
+  addAudit(`Логіст підтвердив передачу замовлення ${order.externalOrderId} в доставку, ТТН ${order.delivery.ttn}`, "system");
+  refreshMarketplaceOrderAfterAction(order.id);
+}
+
+function novaPoshtaTrackableOrders() {
+  return state.marketplaceOrders.filter((order) => {
+    const delivery = order.delivery || {};
+    if (order.status === "cancelled") return false;
+    if (deliveryProviderKey(delivery.service || "") !== "nova_poshta") return false;
+    if (!String(delivery.ttn || "").trim()) return false;
+    return !["new", "sent_to_warehouse", "picked", "warehouse_handover"].includes(delivery.status || "new");
+  });
+}
+
+async function fetchNovaPoshtaTrackingForOrder(order) {
+  const provider = deliveryProviderForOrder(order);
+  if (!provider.enabled || !provider.serverGateway) {
+    const error = new Error("Нова пошта gateway вимкнений або не налаштований.");
+    error.code = "NP_DELIVERY_GATEWAY_DISABLED";
+    throw error;
+  }
+  const apiTtn = novaPoshtaApiTtn(order.delivery.ttn);
+  if (!isNovaPoshtaApiTtn(order.delivery.ttn)) {
+    const error = new Error(`Невалідний формат ТТН: ${order.delivery.ttn || ""}. Для API Нової пошти потрібен номер експрес-накладної цифрами.`);
+    error.code = "NP_DELIVERY_INVALID_TTN_FORMAT";
+    throw error;
+  }
+  const params = new URLSearchParams();
+  const buyer = marketplaceOrderBuyer(order);
+  params.set("ttn", apiTtn);
+  if (buyer?.phone) params.set("phone", buyer.phone);
+  const endpoint = `${provider.endpoint || "/api/delivery/nova-poshta/track"}?${params.toString()}`;
+  const response = await fetch(endpoint, { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.ok === false) {
+    const error = new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+    error.code = payload?.errorCode || payload?.code || "NP_DELIVERY_GATEWAY_ERROR";
+    throw error;
+  }
+  return payload;
+}
+
+function applyNovaPoshtaTrackingPayload(order, payload) {
+  const tracking = payload.tracking || {};
+  const statusCode = payload.statusCode || tracking.statusCode || "";
+  const statusText = payload.status || tracking.status || "Статус отримано";
+  order.delivery = { ...(order.delivery || {}) };
+  order.delivery.status = payload.deliveryStatus || novaPoshtaDeliveryStatus(statusCode, statusText);
+  order.delivery.apiStatus = `${payload.provider || "Нова пошта"}: ${statusText}${statusCode ? ` [${statusCode}]` : ""}`;
+  order.delivery.lastCheck = payload.checkedAt || currentTimestamp();
+  order.delivery.trackingProvider = "nova_poshta";
+  order.delivery.trackingDetails = {
+    provider: payload.provider || "Нова пошта",
+    statusCode,
+    status: statusText,
+    citySender: tracking.citySender || "",
+    cityRecipient: tracking.cityRecipient || "",
+    warehouseRecipient: tracking.warehouseRecipient || "",
+    scheduledDeliveryDate: tracking.scheduledDeliveryDate || "",
+    actualDeliveryDate: tracking.actualDeliveryDate || ""
+  };
+  if (order.delivery.status === "delivered" && !MARKETPLACE_FINAL_STATUSES.includes(order.status)) setMarketplaceOrderWorkflowStage(order, "delivered");
+  return { statusCode, statusText };
+}
+
+function normalizeNovaPoshtaDocument(raw = {}, index = 0) {
+  const row = raw || {};
+  const ttn = String(row.ttn || row.number || row.IntDocNumber || row.Number || row.DocumentNumber || "").trim();
+  const statusCode = String(row.statusCode || row.StateId || row.StatusCode || "").trim();
+  const status = String(row.status || row.StateName || row.Status || row.StatusName || "").trim();
+  const id = String(row.id || row.ref || row.Ref || row.DocumentRef || `np-doc-${novaPoshtaApiTtn(ttn) || index}`).trim();
+  return {
+    id,
+    ref: String(row.ref || row.Ref || row.DocumentRef || id).trim(),
+    ttn,
+    number: String(row.number || ttn).trim(),
+    date: String(row.date || row.DateTime || row.Date || row.CreateTime || "").trim(),
+    status,
+    statusCode,
+    deliveryStatus: row.deliveryStatus || novaPoshtaDeliveryStatus(statusCode, status),
+    citySender: String(row.citySender || row.CitySender || row.SenderCity || "").trim(),
+    cityRecipient: String(row.cityRecipient || row.CityRecipient || row.RecipientCity || "").trim(),
+    sender: String(row.sender || row.Sender || row.SenderDescription || row.ContactSender || "").trim(),
+    recipient: String(row.recipient || row.Recipient || row.RecipientDescription || row.ContactRecipient || "").trim(),
+    cost: parseDecimal(row.cost ?? row.Cost ?? row.DocumentCost ?? row.AnnouncedPrice ?? 0, 0),
+    seatsAmount: String(row.seatsAmount || row.SeatsAmount || row.Seats || "").trim(),
+    orderId: row.orderId || "",
+    lastCheck: row.lastCheck || currentTimestamp(),
+    raw: row.raw || row
+  };
+}
+
+function novaPoshtaDocumentExternalKey(document, index) {
+  return document.ref
+    || document.id
+    || novaPoshtaApiTtn(document.ttn || document.number || "")
+    || `nova-poshta-document-${index}`;
+}
+
+function upsertNovaPoshtaDocument(document) {
+  state.novaPoshtaDocuments = Array.isArray(state.novaPoshtaDocuments) ? state.novaPoshtaDocuments : [];
+  const key = novaPoshtaDocumentExternalKey(document, state.novaPoshtaDocuments.length);
+  const ttnKey = novaPoshtaApiTtn(document.ttn || document.number || "");
+  const existing = state.novaPoshtaDocuments.find((item) => (
+    item.id === document.id
+    || item.ref === document.ref
+    || (ttnKey && novaPoshtaApiTtn(item.ttn || item.number || "") === ttnKey)
+  ));
+  if (existing) {
+    Object.assign(existing, document, {
+      id: existing.id || document.id || key,
+      orderId: document.orderId || existing.orderId || ""
+    });
+    return existing;
+  }
+  state.novaPoshtaDocuments.unshift({ ...document, id: document.id || key });
+  return state.novaPoshtaDocuments[0];
+}
+
+function applyNovaPoshtaDocumentToOrder(document) {
+  const ttnKey = novaPoshtaApiTtn(document.ttn || document.number || "");
+  if (!ttnKey) return null;
+  const order = state.marketplaceOrders.find((item) => novaPoshtaApiTtn(item.delivery?.ttn || item.ttn || "") === ttnKey);
+  if (!order) return null;
+  order.delivery = { ...(order.delivery || {}) };
+  order.delivery.service = order.delivery.service || "Нова пошта";
+  order.delivery.ttn = order.delivery.ttn || document.ttn || document.number || "";
+  order.delivery.status = document.deliveryStatus || novaPoshtaDeliveryStatus(document.statusCode, document.status);
+  order.delivery.trackingProvider = "nova_poshta";
+  order.delivery.apiStatus = `Нова пошта: ${document.status || "документ отримано"}${document.statusCode ? ` [${document.statusCode}]` : ""}`;
+  order.delivery.lastCheck = document.lastCheck || currentTimestamp();
+  order.delivery.trackingDetails = {
+    provider: "Нова пошта",
+    statusCode: document.statusCode || "",
+    status: document.status || "",
+    citySender: document.citySender || "",
+    cityRecipient: document.cityRecipient || "",
+    warehouseRecipient: "",
+    scheduledDeliveryDate: "",
+    actualDeliveryDate: ""
+  };
+  if (order.delivery.status === "delivered" && !MARKETPLACE_FINAL_STATUSES.includes(order.status)) setMarketplaceOrderWorkflowStage(order, "delivered");
+  document.orderId = order.id;
+  return order;
+}
+
+function importNovaPoshtaDocumentsPayload(payload) {
+  const rows = Array.isArray(payload)
+    ? payload
+    : payload?.documents
+      || payload?.data?.documents
+      || payload?.data
+      || payload?.items
+      || [];
+  if (!Array.isArray(rows)) {
+    const error = new Error("Nova Poshta documents payload is not an array.");
+    error.code = "NP_DOCUMENTS_PARSE_ERROR";
+    throw error;
+  }
+  const delta = changedExternalRows("novaPoshta", "documents", rows, (row, index) => novaPoshtaDocumentExternalKey(normalizeNovaPoshtaDocument(row, index), index));
+  const summary = { imported: 0, linkedOrders: 0, skipped: delta.skipped, errors: 0, codes: [] };
+  delta.rows.forEach(({ row, change }, index) => {
+    try {
+      const document = upsertNovaPoshtaDocument(normalizeNovaPoshtaDocument(row, index));
+      const order = applyNovaPoshtaDocumentToOrder(document);
+      if (order) summary.linkedOrders += 1;
+      markExternalRecordApplied(change);
+      summary.imported += 1;
+    } catch (error) {
+      summary.errors += 1;
+      summary.codes.push(error.code || "NP_DOCUMENTS_IMPORT_ERROR");
+    }
+  });
+  const message = `Нова пошта: імпортовано документів ${summary.imported}, прив'язано до замовлень ${summary.linkedOrders}, без змін ${summary.skipped}, помилки ${summary.errors}.`;
+  addAudit(`${message}${summary.codes.length ? ` Коди: ${uniqueList(summary.codes).join(", ")}` : ""}`, "system");
+  return summary;
+}
+
+async function importNovaPoshtaKnownTtnDocuments() {
+  const orders = novaPoshtaTrackableOrders();
+  const summary = { checked: 0, imported: 0, linkedOrders: 0, updatedOrders: 0, skipped: 0, errors: 0, codes: [] };
+  for (let index = 0; index < orders.length; index += 1) {
+    const order = orders[index];
+    const apiTtn = novaPoshtaApiTtn(order.delivery?.ttn || "");
+    if (!isNovaPoshtaApiTtn(apiTtn)) {
+      summary.skipped += 1;
+      summary.codes.push("NP_DELIVERY_INVALID_TTN_FORMAT");
+      continue;
+    }
+    try {
+      const payload = await fetchNovaPoshtaTrackingForOrder(order);
+      const tracking = payload.tracking || {};
+      const buyer = marketplaceOrderBuyer(order);
+      const document = normalizeNovaPoshtaDocument({
+        id: `np-track-${apiTtn}`,
+        ref: `np-track-${apiTtn}`,
+        ttn: apiTtn,
+        number: apiTtn,
+        date: payload.checkedAt || currentTimestamp(),
+        status: payload.status || tracking.status || "",
+        statusCode: payload.statusCode || tracking.statusCode || "",
+        deliveryStatus: payload.deliveryStatus || novaPoshtaDeliveryStatus(payload.statusCode || tracking.statusCode || "", payload.status || tracking.status || ""),
+        citySender: tracking.citySender || "",
+        cityRecipient: tracking.cityRecipient || "",
+        sender: tracking.citySender || "",
+        recipient: buyer?.name || tracking.cityRecipient || "",
+        orderId: order.id,
+        lastCheck: payload.checkedAt || currentTimestamp(),
+        raw: payload
+      }, index);
+      const change = externalRecordChange("novaPoshta", "documentsByTracking", apiTtn, document);
+      const stored = upsertNovaPoshtaDocument(document);
+      const linkedOrder = applyNovaPoshtaDocumentToOrder(stored);
+      applyNovaPoshtaTrackingPayload(order, payload);
+      summary.checked += 1;
+      summary.updatedOrders += 1;
+      if (linkedOrder) summary.linkedOrders += 1;
+      if (change.changed) {
+        markExternalRecordApplied(change);
+        summary.imported += 1;
+      } else {
+        summary.skipped += 1;
+      }
+    } catch (error) {
+      const code = error.code || "NP_DOCUMENTS_TRACKING_FALLBACK_ERROR";
+      summary.errors += 1;
+      summary.codes.push(code);
+      addAudit(`Нова пошта documents fallback: ${code} - ${error.message} (${order.externalOrderId}, ТТН ${order.delivery?.ttn || ""})`, "system");
+    }
+  }
+  return summary;
+}
+
+async function pullNovaPoshtaDocumentsFromGateway({ silent = false } = {}) {
+  if (!canTrackMarketplaceDelivery()) {
+    const code = "NP_DOCUMENTS_ACCESS_DENIED";
+    const message = "Поточна роль не має права отримувати документи Нової пошти.";
+    setExchangeProcess("novaPoshta", { status: "error", percent: 100, stage: "Доступ заборонено", message, code });
+    if (!silent) alert(`${code}: ${message}`);
+    return { imported: 0, linkedOrders: 0, skipped: 0, errors: 1, codes: [code] };
+  }
+  const endpoint = "/api/delivery/nova-poshta/documents?history=all&historyFrom=2020-01-01&limit=500&maxPages=1000&windowDays=30";
+  try {
+    setExchangeProcess("novaPoshta", { status: "running", percent: 10, stage: "Запит документів", message: endpoint, code: "" });
+    const response = await fetch(endpoint, { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false) {
+      const error = new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+      error.code = payload?.errorCode || payload?.code || "NP_DOCUMENTS_GATEWAY_ERROR";
+      throw error;
+    }
+    setExchangeProcess("novaPoshta", { status: "running", percent: 70, stage: "Застосування", message: `Отримано ${payload.count ?? (payload.documents || []).length} документів.`, code: "" });
+    const summary = importNovaPoshtaDocumentsPayload(payload);
+    if (payload.history) {
+      summary.history = payload.history;
+    }
+    let fallbackSummary = null;
+    let emptyCabinetWarning = false;
+    const sourceCount = Number(payload.count ?? ((payload.documents || []).length || 0));
+    const trackableCount = novaPoshtaTrackableOrders().length;
+    if (sourceCount === 0 && trackableCount) {
+      setExchangeProcess("novaPoshta", { status: "running", percent: 78, stage: "Fallback CRM-ТТН", message: "Кабінет НП повернув 0 документів; перевіряємо ТТН із CRM.", code: "" });
+      fallbackSummary = await importNovaPoshtaKnownTtnDocuments();
+      summary.imported += fallbackSummary.imported;
+      summary.linkedOrders += fallbackSummary.linkedOrders;
+      summary.skipped += fallbackSummary.skipped;
+      summary.errors += fallbackSummary.errors;
+      summary.codes.push(...fallbackSummary.codes);
+    } else if (sourceCount === 0) {
+      emptyCabinetWarning = true;
+      summary.codes.push("NP_DOCUMENTS_EMPTY_FROM_CABINET");
+    }
+    if (payload.partial && payload.errorCode) {
+      summary.errors += 1;
+      summary.codes.push(payload.errorCode);
+    }
+    const fallbackText = fallbackSummary
+      ? ` Кабінет НП: ${sourceCount}; CRM-ТТН перевірено ${fallbackSummary.checked}, оновлено замовлень ${fallbackSummary.updatedOrders}.`
+      : (emptyCabinetWarning ? ` Кабінет НП повернув 0 документів; CRM-ТТН для fallback: ${trackableCount}.` : "");
+    const message = `Нова пошта: імпортовано документів ${summary.imported}, прив'язано до замовлень ${summary.linkedOrders}, без змін ${summary.skipped}, помилки ${summary.errors}.${fallbackText}`;
+    const displayMessage = `${message}${novaPoshtaHistorySummaryText(summary.history)}`;
+    setExchangeProcess("novaPoshta", {
+      status: summary.errors ? "error" : (emptyCabinetWarning ? "warning" : "success"),
+      percent: 100,
+      stage: summary.errors ? "Завершено з помилками" : (emptyCabinetWarning ? "Кабінет НП повернув 0" : "OK"),
+      message: displayMessage,
+      code: summary.codes[0] || ""
+    });
+    if (silent) saveState();
+    else {
+      alert(displayMessage);
+      render();
+    }
+    return summary;
+  } catch (error) {
+    const code = error.code || "NP_DOCUMENTS_GATEWAY_ERROR";
+    const message = `${code}: ${error.message}`;
+    setExchangeProcess("novaPoshta", { status: "error", percent: 100, stage: "Помилка Нова пошта", message, code });
+    addAudit(`Нова пошта documents API: ${message}`, "system");
+    if (!silent) {
+      alert(message);
+      render();
+      return null;
+    }
+    saveState();
+    error.code = code;
+    throw error;
+  }
+}
+
+async function syncNovaPoshtaDeliveries({ silent = false } = {}) {
+  if (!canTrackMarketplaceDelivery()) {
+    const code = "NP_DELIVERY_ACCESS_DENIED";
+    const message = "Поточна роль не має права відстежувати доставку.";
+    setExchangeProcess("novaPoshta", { status: "error", percent: 100, stage: "Доступ заборонено", message, code });
+    if (!silent) alert(`${code}: ${message}`);
+    return { updated: 0, errors: 1, skipped: 0, code };
+  }
+  const orders = novaPoshtaTrackableOrders();
+  if (!orders.length) {
+    const message = "Немає готових до перевірки замовлень з Нова пошта + ТТН. Замовлення має бути передане логісту.";
+    setExchangeProcess("novaPoshta", { status: "success", percent: 100, stage: "Немає ТТН до оновлення", message, code: "" });
+    if (silent) saveState();
+    else {
+      alert(message);
+      render();
+    }
+    return { updated: 0, errors: 0, skipped: 0 };
+  }
+  const summary = { updated: 0, errors: 0, skipped: 0, codes: [] };
+  setExchangeProcess("novaPoshta", { status: "running", percent: 5, stage: "Підготовка", message: `До перевірки ${orders.length} ТТН.`, code: "" });
+  for (let index = 0; index < orders.length; index += 1) {
+    const order = orders[index];
+    const percent = 10 + Math.round(((index + 1) / orders.length) * 80);
+    setExchangeProcess("novaPoshta", { status: "running", percent, stage: `ТТН ${index + 1}/${orders.length}`, message: `${order.externalOrderId}: ${order.delivery?.ttn || ""}`, code: "" });
+    if (!isNovaPoshtaApiTtn(order.delivery?.ttn || "")) {
+      summary.skipped += 1;
+      order.delivery = { ...(order.delivery || {}) };
+      order.delivery.apiStatus = `Нова пошта: NP_DELIVERY_INVALID_TTN_FORMAT - потрібен номер експрес-накладної цифрами`;
+      order.delivery.lastCheck = currentTimestamp();
+      addAudit(`Нова пошта API: NP_DELIVERY_INVALID_TTN_FORMAT - пропущено ${order.externalOrderId}, ТТН ${order.delivery.ttn}`, "system");
+      continue;
+    }
+    try {
+      const payload = await fetchNovaPoshtaTrackingForOrder(order);
+      const apiTtn = novaPoshtaApiTtn(order.delivery.ttn);
+      const change = externalRecordChange("novaPoshta", "tracking", apiTtn, payload);
+      if (!change.changed) {
+        summary.skipped += 1;
+        order.delivery = { ...(order.delivery || {}) };
+        order.delivery.lastCheck = payload.checkedAt || currentTimestamp();
+        continue;
+      }
+      const result = applyNovaPoshtaTrackingPayload(order, payload);
+      markExternalRecordApplied(change);
+      summary.updated += 1;
+      addAudit(`Нова пошта API оновила ${order.externalOrderId}: ${deliveryStatusLabel(order.delivery.status)} за ТТН ${order.delivery.ttn}${result.statusCode ? ` [${result.statusCode}]` : ""}`, "system");
+    } catch (error) {
+      const code = error.code || "NP_DELIVERY_GATEWAY_ERROR";
+      summary.errors += 1;
+      summary.codes.push(code);
+      order.delivery = { ...(order.delivery || {}) };
+      order.delivery.status = "delivery_problem";
+      order.delivery.apiStatus = `Нова пошта: ${code} - ${error.message}`;
+      order.delivery.lastCheck = currentTimestamp();
+      addAudit(`Нова пошта API: ${code} - ${error.message} (${order.externalOrderId}, ТТН ${order.delivery.ttn})`, "system");
+    }
+  }
+  const message = `Нова пошта: оновлено ${summary.updated}, пропущено ${summary.skipped}, помилки ${summary.errors}.`;
+  setExchangeProcess("novaPoshta", {
+    status: summary.errors ? "error" : "success",
+    percent: 100,
+    stage: summary.errors ? "Завершено з помилками" : "OK",
+    message,
+    code: summary.codes[0] || ""
+  });
+  addAudit(`${message}${summary.codes.length ? ` Коди: ${uniqueList(summary.codes).join(", ")}` : ""}`, "system");
+  if (silent) saveState();
+  else {
+    alert(message);
+    render();
+  }
+  return summary;
+}
+
+async function trackMarketplaceDelivery(id) {
   if (!canTrackMarketplaceDelivery()) return alert("Поточна роль не має права відстежувати доставку.");
   const order = byId(state.marketplaceOrders, id);
   if (!order) return;
+  order.delivery = { ...(order.delivery || {}) };
   if (!order.delivery.ttn) return alert("Для API-відстеження потрібно внести або створити ТТН.");
+  if (["new", "sent_to_warehouse", "picked", "warehouse_handover"].includes(order.delivery.status || "new")) return alert("Спочатку логіст має підтвердити передачу в доставку.");
+  if (order.status === "cancelled") return alert("Скасоване замовлення не можна переводити в доставлено.");
+  const provider = deliveryProviderForOrder(order);
   order.delivery.lastCheck = currentTimestamp();
-  if (order.delivery.status === "delivered") {
-    order.delivery.apiStatus = "Вручено отримувачу, статус підтверджено API";
-  } else {
-    order.delivery.status = "delivered";
-    order.delivery.apiStatus = "Вручено отримувачу, статус підтверджено API";
-    order.dates = { created: order.date || today, agreed: order.dates?.agreed || today, warehouse: order.dates?.warehouse || today, delivery: order.dates?.delivery || today, delivered: today, paid: order.dates?.paid || "", ...(order.dates || {}), delivered: today };
-    if (order.status !== "paid") order.status = "delivered";
+  order.delivery.trackingProvider = deliveryProviderKey(order.delivery.service || "");
+  if (provider.enabled && provider.serverGateway && order.delivery.trackingProvider === "nova_poshta") {
+    try {
+      if (!isNovaPoshtaApiTtn(order.delivery.ttn)) {
+        const error = new Error(`Невалідний формат ТТН: ${order.delivery.ttn || ""}. Для API Нової пошти потрібен номер експрес-накладної цифрами.`);
+        error.code = "NP_DELIVERY_INVALID_TTN_FORMAT";
+        throw error;
+      }
+      const params = new URLSearchParams();
+      const buyer = marketplaceOrderBuyer(order);
+      params.set("ttn", novaPoshtaApiTtn(order.delivery.ttn));
+      if (buyer?.phone) params.set("phone", buyer.phone);
+      const endpoint = `${provider.endpoint || "/api/delivery/nova-poshta/track"}?${params.toString()}`;
+      const response = await fetch(endpoint, { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || payload?.ok === false) {
+        const error = new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+        error.code = payload?.errorCode || payload?.code || "NP_DELIVERY_GATEWAY_ERROR";
+        throw error;
+      }
+      const change = externalRecordChange("novaPoshta", "tracking", novaPoshtaApiTtn(order.delivery.ttn), payload);
+      if (!change.changed) {
+        order.delivery.lastCheck = payload.checkedAt || currentTimestamp();
+        refreshMarketplaceOrderAfterAction(order.id);
+        return;
+      }
+      const tracking = payload.tracking || {};
+      const statusCode = payload.statusCode || tracking.statusCode || "";
+      const statusText = payload.status || tracking.status || "Статус отримано";
+      order.delivery.status = payload.deliveryStatus || novaPoshtaDeliveryStatus(statusCode, statusText);
+      order.delivery.apiStatus = `${payload.provider || provider.provider}: ${statusText}${statusCode ? ` [${statusCode}]` : ""}`;
+      order.delivery.lastCheck = payload.checkedAt || currentTimestamp();
+      order.delivery.trackingDetails = {
+        provider: payload.provider || provider.provider,
+        statusCode,
+        status: statusText,
+        citySender: tracking.citySender || "",
+        cityRecipient: tracking.cityRecipient || "",
+        warehouseRecipient: tracking.warehouseRecipient || "",
+        scheduledDeliveryDate: tracking.scheduledDeliveryDate || "",
+        actualDeliveryDate: tracking.actualDeliveryDate || ""
+      };
+      markExternalRecordApplied(change);
+      if (order.delivery.status === "delivered" && !MARKETPLACE_FINAL_STATUSES.includes(order.status)) setMarketplaceOrderWorkflowStage(order, "delivered");
+      addAudit(`Нова пошта API оновила ${order.externalOrderId}: ${deliveryStatusLabel(order.delivery.status)} за ТТН ${order.delivery.ttn}${statusCode ? ` [${statusCode}]` : ""}`, "system");
+      refreshMarketplaceOrderAfterAction(order.id);
+      return;
+    } catch (error) {
+      const code = error.code || "NP_DELIVERY_GATEWAY_ERROR";
+      order.delivery.status = "delivery_problem";
+      order.delivery.apiStatus = `${provider.provider}: ${code} - ${error.message}`;
+      order.delivery.lastCheck = currentTimestamp();
+      addAudit(`Нова пошта API: ${code} - ${error.message} (${order.externalOrderId}, ТТН ${order.delivery.ttn})`, "system");
+      refreshMarketplaceOrderAfterAction(order.id);
+      return;
+    }
   }
-  addAudit(`API доставки підтвердив вручення ${order.externalOrderId} за ТТН ${order.delivery.ttn}`, "system");
-  render();
+  if (provider.enabled && !provider.apiKey) {
+    order.delivery.status = "delivery_problem";
+    order.delivery.apiStatus = `${provider.provider}: API_FAIL_NO_KEY - не заповнений ключ API`;
+    addAudit(`API доставки не перевірив ${order.externalOrderId}: API_FAIL_NO_KEY`, "system");
+    refreshMarketplaceOrderAfterAction(order.id);
+    return;
+  }
+  const nextStatus = {
+    logistics_accepted: "sent_to_delivery",
+    sent_to_delivery: "in_transit",
+    in_transit: "arrived_branch",
+    arrived_branch: "delivered",
+    delivered: "delivered",
+    delivery_problem: "delivery_problem"
+  };
+  order.delivery.status = nextStatus[order.delivery.status] || "sent_to_delivery";
+  order.delivery.apiStatus = provider.enabled
+    ? `${provider.provider}: статус оновлено через API`
+    : `${provider.provider}: тестове відстеження CRM, API не увімкнено`;
+  if (order.delivery.status === "delivered" && !MARKETPLACE_FINAL_STATUSES.includes(order.status)) setMarketplaceOrderWorkflowStage(order, "delivered");
+  addAudit(`API доставки оновив статус ${order.externalOrderId}: ${deliveryStatusLabel(order.delivery.status)} за ТТН ${order.delivery.ttn}`, "system");
+  refreshMarketplaceOrderAfterAction(order.id);
 }
 
 function createInvoiceFromMarketplaceOrder(id) {
@@ -9818,15 +17703,19 @@ function createInvoiceFromMarketplaceOrder(id) {
   const order = byId(state.marketplaceOrders, id);
   if (!order) return;
   if (order.invoiceId) return alert("Накладна вже створена.");
-  if (!["agreed", "sent_to_warehouse", "sent_to_delivery", "delivered", "paid"].includes(order.status)) return alert("Спочатку узгодьте асортимент, доставку та оплату з покупцем.");
-  const product = byId(state.products, order.productId);
-  if (!product) return alert("Товар не знайдено.");
-  if (product.type === "weapon") return alert("Для зброї автоматична накладна з маркетплейсу заблокована: потрібно вибрати серії та внести дозвіл покупця у продажі.");
+  if (!statusAtLeast(order.status, "confirmed_by_client") || order.status === "cancelled") return alert("Спочатку підтвердіть замовлення з клієнтом.");
+  const lines = marketplaceOrderLines(order);
+  if (!lines.length) return alert("У замовленні немає товарних рядків.");
+  const products = lines.map((line) => byId(state.products, line.productId));
+  const missingIndex = products.findIndex((product) => !product);
+  if (missingIndex >= 0) return alert(`Рядок ${missingIndex + 1}: товар не знайдено.`);
+  if (products.some((product) => product.type === "weapon")) return alert("Для зброї автоматична накладна з маркетплейсу заблокована: потрібно вибрати серії та внести дозвіл покупця у продажі.");
   const invoiceWarehouseId = "wh-main";
   const invoiceFirmId = "fop";
-  if (productAvailableQty(product.id, invoiceWarehouseId, invoiceFirmId) < Number(order.qty || 1)) return alert(`Недостатньо залишку для створення накладної: ${productName(product.id)} · ${warehouseName(invoiceWarehouseId)} · ${firmName(invoiceFirmId)}.`);
+  const shortage = lines.find((line) => productAvailableQty(line.productId, invoiceWarehouseId, invoiceFirmId) < Number(line.qty || 1));
+  if (shortage) return alert(`Недостатньо залишку для створення накладної: ${productName(shortage.productId)} · ${warehouseName(invoiceWarehouseId)} · ${firmName(invoiceFirmId)}.`);
   const client = ensureClientFromMarketplaceOrder(order);
-  const total = Number(order.qty || 1) * Number(order.price || 0);
+  const total = marketplaceOrderTotal(order);
   const invoice = {
     id: `inv-${String(Date.now()).slice(-8)}`,
     date: today,
@@ -9847,18 +17736,44 @@ function createInvoiceFromMarketplaceOrder(id) {
     accounting: false,
     locked: false,
     status: order.payment.status === "paid" ? "paid" : "draft",
-    lines: [{ productId: product.id, qty: Number(order.qty || 1), price: Number(order.price || 0), currency: order.currency, serialId: "", permitNumber: "", permitDate: "" }],
+    lines: lines.map((line) => ({
+      productId: line.productId,
+      qty: Number(line.qty || 1),
+      price: Number(line.price || 0),
+      currency: line.currency || order.currency,
+      serialId: "",
+      permitNumber: "",
+      permitDate: "",
+      comment: line.comment || ""
+    })),
     delivery: order.delivery.service,
     deliveryPayer: "Маркетплейс",
     ttn: order.delivery.ttn,
     comment: `Маркетплейс ${order.marketplace}, замовлення ${order.externalOrderId}`
   };
-  decrementStock(product.id, order.qty, invoiceWarehouseId, invoiceFirmId);
+  lines.forEach((line) => decrementStock(line.productId, line.qty, invoiceWarehouseId, invoiceFirmId));
   state.invoices.unshift(invoice);
   order.invoiceId = invoice.id;
-  if (order.status === "agreed") order.status = "sent_to_warehouse";
+  if (!statusAtLeast(order.status, "picking")) setMarketplaceOrderWorkflowStage(order, "picking");
   order.warehouseStatus = "reserved";
-  order.dates = { created: order.date || today, agreed: order.dates?.agreed || today, warehouse: order.dates?.warehouse || today, delivery: order.dates?.delivery || "", delivered: order.dates?.delivered || "", paid: order.dates?.paid || "", ...(order.dates || {}) };
+  order.dates = {
+    ...(order.dates || {}),
+    created: order.date || today,
+    inProgress: order.dates?.inProgress || "",
+    waitingClient: order.dates?.waitingClient || "",
+    agreed: order.dates?.agreed || today,
+    paymentWaiting: order.dates?.paymentWaiting || "",
+    warehouse: order.dates?.warehouse || today,
+    picked: order.dates?.picked || "",
+    delivery: order.dates?.delivery || "",
+    delivered: order.dates?.delivered || "",
+    completed: order.dates?.completed || "",
+    paid: order.dates?.paid || "",
+    upsell: order.dates?.upsell || "",
+    aftersale: order.dates?.aftersale || "",
+    repeat: order.dates?.repeat || "",
+    cancelled: order.dates?.cancelled || ""
+  };
   if (order.payment.status === "paid") addMarketplacePaymentIfMissing(order, invoice);
   addAudit(`Створено накладну ${invoice.id} з маркетплейс-замовлення ${order.externalOrderId}`);
   render();
@@ -9886,16 +17801,128 @@ function addMarketplacePaymentIfMissing(order, invoice) {
   });
 }
 
+function marketplaceOrderPaymentRecords(order) {
+  return state.payments.filter((payment) => (
+    payment.marketplaceOrderId === order.id
+    || (order.invoiceId && payment.invoiceId === order.invoiceId)
+    || payment.bankRef === `${order.marketplace} ${order.externalOrderId}`
+  ));
+}
+
+function marketplaceOrderPaidAmount(order) {
+  return marketplaceOrderPaymentRecords(order).reduce((sum, payment) => {
+    return sum + convertMoney(payment.amount, payment.currency, order.currency || "UAH");
+  }, 0);
+}
+
+function marketplaceOrderPaymentDue(order) {
+  if (order.payment?.status === "paid") return 0;
+  const invoice = byId(state.invoices, order.invoiceId);
+  if (invoice) return Math.max(0, invoiceDebt(invoice));
+  return Math.max(0, Number(order.payment?.amount || marketplaceOrderTotal(order)) - marketplaceOrderPaidAmount(order));
+}
+
+function openMarketplaceOrderPaymentForm(id) {
+  if (!canCreateDocument("payment")) return alert("Поточна роль не має права створювати оплати.");
+  if (!canEditField("payment")) return alert("Поточна роль не має права змінювати поля оплати.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return alert("Замовлення маркетплейсу не знайдено.");
+  if (order.status === "cancelled") return alert("Скасоване замовлення не можна оплатити.");
+  const invoice = byId(state.invoices, order.invoiceId);
+  const due = marketplaceOrderPaymentDue(order) || Number(order.payment?.amount || marketplaceOrderTotal(order));
+  const firmId = invoice?.firmId || state.settings.firms[0]?.id || "";
+  const defaultPaymentSource = ["cash", "bank", "card"].includes(order.payment?.source) ? order.payment.source : "bank";
+  const terminalOptions = paymentTerminalsForFirm(firmId).map((terminal) => option(terminal.id, `${terminal.name} · ${firmName(terminal.firmId)}`, false)).join("");
+  openModal(`Оплата замовлення ${order.externalOrderId}`, `
+    <form class="form-grid" data-action="create-marketplace-order-payment">
+      <input type="hidden" name="orderId" value="${escapeHtml(order.id)}">
+      <div class="notice small full">
+        <strong>${escapeHtml(order.marketplace)} · ${escapeHtml(order.externalOrderId)}</strong><br>
+        Покупець: ${escapeHtml(marketplaceOrderBuyer(order).name || "-")} · до оплати ${formatMoney(due, order.currency || "UAH")}
+        ${invoice ? `<br>Накладна: ${escapeHtml(invoice.id)}, борг ${formatMoney(invoiceDebt(invoice), invoice.currency)}` : "<br>Накладної ще немає: оплата буде прив'язана напряму до замовлення."}
+      </div>
+      <label class="field"><span>Дата оплати</span><input name="date" type="date" value="${today}"></label>
+      <label class="field"><span>Сума</span><input name="amount" inputmode="decimal" value="${escapeHtml(due)}"></label>
+      <label class="field"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === (order.currency || "UAH"))).join("")}</select></label>
+      <label class="field"><span>Джерело</span><select name="paymentSource">${variantOptions("paymentSources", defaultPaymentSource)}</select></label>
+      <label class="field wide"><span>Фірма зарахування</span><select name="firmId">${state.settings.firms.map((firm) => option(firm.id, firm.name, firm.id === firmId)).join("")}</select></label>
+      <label class="field wide"><span>Термінал</span><select name="terminalId"><option value="">Без термінала</option>${terminalOptions}</select></label>
+      <label class="field"><span>ПРРО</span><select name="prro">${option("true", "Проводити ПРРО", false)}${option("false", "Без ПРРО", true)}</select></label>
+      <label class="field wide"><span>Референс</span><input name="bankRef" value="${escapeHtml(order.payment?.source || `${order.marketplace} ${order.externalOrderId}`)}"></label>
+      <label class="field"><span>Статус замовлення</span><select name="paymentStatus">${option("paid", "Перевести в оплачено", true)}${option("pending", "Залишити на перевірці", false)}</select></label>
+      <button class="primary" type="submit">Створити оплату</button>
+    </form>
+  `);
+}
+
+function createMarketplaceOrderPayment(form) {
+  if (!canCreateDocument("payment")) return alert("Поточна роль не має права створювати оплати.");
+  if (!canEditField("payment")) return alert("Поточна роль не має права змінювати поля оплати.");
+  const data = formData(form);
+  const order = byId(state.marketplaceOrders, data.orderId);
+  if (!order) return alert("Замовлення маркетплейсу не знайдено.");
+  if (order.status === "cancelled") return alert("Скасоване замовлення не можна оплатити.");
+  const amount = parseDecimal(data.amount, 0);
+  if (amount <= 0) return alert("Сума оплати має бути більшою за нуль.");
+  if (data.paymentSource === "card" && !data.terminalId) return alert("Для оплати карткою потрібно вибрати термінал.");
+  const client = ensureClientFromMarketplaceOrder(order);
+  const invoice = byId(state.invoices, order.invoiceId);
+  const customRate = uahRate(data.currency);
+  const payment = {
+    id: `pay-${String(Date.now()).slice(-6)}`,
+    invoiceId: invoice?.id || "",
+    marketplaceOrderId: order.id,
+    externalOrderId: order.externalOrderId,
+    marketplace: order.marketplace,
+    date: data.date || today,
+    amount,
+    currency: data.currency || order.currency || "UAH",
+    rate: customRate,
+    rateMode: "settings",
+    method: paymentMethodFromSource(data.paymentSource),
+    source: data.paymentSource,
+    paymentKind: invoice ? "invoice" : "marketplaceOrder",
+    advance: false,
+    clientId: client.id,
+    firmId: data.firmId || invoice?.firmId || state.settings.firms[0]?.id || "",
+    terminalId: data.paymentSource === "card" ? data.terminalId : "",
+    prro: data.paymentSource === "cash" ? data.prro === "true" : false,
+    bankRef: data.bankRef || `${order.marketplace} ${order.externalOrderId}`
+  };
+  state.payments.unshift(payment);
+  if (invoice) {
+    const paidInInvoiceCurrency = convertMoney(amount, payment.currency, invoice.currency);
+    invoice.paid = Math.min(invoice.total, Number(invoice.paid || 0) + paidInInvoiceCurrency);
+    invoice.status = invoice.paid >= invoice.total ? "paid" : "partial";
+  }
+  order.payment = {
+    ...(order.payment || {}),
+    status: data.paymentStatus === "pending" ? "pending" : "paid",
+    amount: Number(order.payment?.amount || marketplaceOrderTotal(order)),
+    source: payment.bankRef,
+    method: payment.method,
+    apiStatus: data.paymentStatus === "pending" ? "Оплату створено в CRM, очікує перевірку" : "Оплата створена вручну в CRM",
+    lastCheck: currentTimestamp(),
+    paidAt: data.paymentStatus === "pending" ? (order.payment?.paidAt || "") : (data.date || today)
+  };
+  if (order.payment.status === "paid" && !statusAtLeast(order.status, "paid")) {
+    setMarketplaceOrderWorkflowStage(order, "paid");
+  }
+  addAudit(`Створено оплату ${payment.id} по маркетплейс-замовленню ${order.externalOrderId}: ${formatMoney(amount, payment.currency)}`);
+  document.querySelector(".modal-backdrop")?.remove();
+  render();
+}
+
 function pullMarketplacePayment(id) {
   if (!canTrackMarketplacePayment()) return alert("Поточна роль не має права підтягувати оплату маркетплейсу.");
   const order = byId(state.marketplaceOrders, id);
   if (!order) return;
+  if (order.status === "cancelled") return alert("Скасоване замовлення не можна переводити в оплачено.");
   order.payment.status = "paid";
   order.payment.apiStatus = "Оплата підтверджена API маркетплейсу або поштового сервісу";
   order.payment.lastCheck = currentTimestamp();
   order.payment.paidAt = today;
-  order.dates = { created: order.date || today, agreed: order.dates?.agreed || "", warehouse: order.dates?.warehouse || "", delivery: order.dates?.delivery || "", delivered: order.dates?.delivered || "", paid: today, ...(order.dates || {}), paid: today };
-  order.status = "paid";
+  if (!statusAtLeast(order.status, "paid")) setMarketplaceOrderWorkflowStage(order, "paid");
   if (order.invoiceId) {
     const invoice = byId(state.invoices, order.invoiceId);
     if (invoice && invoice.paid < invoice.total) {
@@ -9903,13 +17930,575 @@ function pullMarketplacePayment(id) {
       invoice.status = "paid";
       addMarketplacePaymentIfMissing(order, invoice);
     }
+  } else if (!state.payments.some((payment) => payment.marketplaceOrderId === order.id)) {
+    const source = ["cash", "bank", "card"].includes(order.payment?.source) ? order.payment.source : "bank";
+    const client = ensureClientFromMarketplaceOrder(order);
+    state.payments.unshift({
+      id: `pay-${String(Date.now()).slice(-6)}`,
+      invoiceId: "",
+      marketplaceOrderId: order.id,
+      externalOrderId: order.externalOrderId,
+      marketplace: order.marketplace,
+      date: today,
+      amount: Number(order.payment?.amount || marketplaceOrderTotal(order)),
+      currency: order.currency || "UAH",
+      rate: uahRate(order.currency || "UAH"),
+      rateMode: "settings",
+      method: order.payment?.method || paymentMethodFromSource(source),
+      source,
+      paymentKind: "marketplaceOrder",
+      advance: false,
+      clientId: client.id,
+      firmId: state.settings.firms[0]?.id || "",
+      terminalId: "",
+      prro: false,
+      bankRef: order.payment?.source || `${order.marketplace} ${order.externalOrderId}`
+    });
   }
   addAudit(`Підтягнуто оплату по маркетплейс-замовленню ${order.externalOrderId}`, "system");
-  render();
+  refreshMarketplaceOrderAfterAction(order.id);
 }
 
 function trackMarketplacePayment(id) {
   pullMarketplacePayment(id);
+}
+
+function recordCommunicationEvent(event) {
+  state.communicationEvents = Array.isArray(state.communicationEvents) ? state.communicationEvents : [];
+  state.communicationEvents.unshift({
+    id: uniqueId("comm"),
+    at: currentTimestamp(),
+    manager: state.currentManager,
+    status: "зафіксовано в CRM",
+    ...event
+  });
+}
+
+async function postRozetkaMessageReply(question, text, sendEmailUser = false) {
+  if (!question.chatId) throw new Error("У питання немає chat_id для відповіді через Rozetka API.");
+  if (!question.receiverId) throw new Error("У питання немає receiver_id покупця для /messages/create.");
+  const orderId = String(question.externalOrderId || "").replace(/^RZ-/i, "");
+  const payload = {
+    body: text,
+    chat_id: Number(question.chatId),
+    order_id: Number(orderId) || null,
+    receiver_id: Number(question.receiverId),
+    sendEmailUser: sendEmailUser ? 1 : 0
+  };
+  const response = await fetch("/api/rozetka/messages/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.success === false || result.ok === false) {
+    const error = new Error(result.error || result?.errors?.message || `HTTP ${response.status}`);
+    error.code = result.code || result?.errors?.code || response.status;
+    throw error;
+  }
+  return result;
+}
+
+async function replyMarketplaceQuestion(form) {
+  if (!canContactMarketplaceBuyer() || !canCreateDocument("marketplaceCustomerQuestions")) return alert("Поточна роль не має права відповідати на питання маркетплейсу.");
+  const data = formData(form);
+  const question = byId(state.marketplaceCustomerQuestions || [], data.questionId);
+  if (!question) return alert("Питання не знайдено.");
+  const answer = String(data.answer || "").trim();
+  if (!answer) return alert("Вкажіть відповідь менеджера.");
+  let apiStatus = "відповідь зафіксована в CRM";
+  if (data.sendApi === "true") {
+    const result = await postRozetkaMessageReply(question, answer, data.sendEmailUser === "1");
+    apiStatus = `відправлено через /messages/create${result?.content?.status !== undefined ? `, статус ${result.content.status}` : ""}`;
+  }
+  question.answer = answer;
+  question.answeredAt = currentTimestamp();
+  question.updatedAt = currentTimestamp();
+  question.status = data.status || "answered";
+  question.manager = state.currentManager;
+  question.apiStatus = apiStatus;
+  recordCommunicationEvent({
+    type: "message",
+    channel: "marketplace",
+    orderId: question.orderId || marketplaceQuestionOrder(question)?.id || "",
+    externalOrderId: question.externalOrderId || "",
+    receiver: question.buyerName || "",
+    text: answer,
+    status: apiStatus,
+    manager: state.currentManager
+  });
+  addAudit(`${question.marketplace}: відповідь на ${marketplaceCustomerQuestionTypeLabel(question.sourceType)} ${question.externalOrderId || question.externalId}`, state.currentManager);
+  form.closest(".modal-backdrop")?.remove();
+  render();
+}
+
+function replyMarketplaceThread(form) {
+  if (!canContactMarketplaceBuyer() || !canCreateDocument("marketplaceServiceThreads")) return alert("Поточна роль не має права відповідати маркетплейсу.");
+  const data = formData(form);
+  const thread = byId(state.marketplaceServiceThreads || [], data.threadId);
+  if (!thread) return alert("Звернення не знайдено.");
+  const answer = String(data.answer || "").trim();
+  if (!answer) return alert("Вкажіть відповідь або коментар.");
+  thread.answer = answer;
+  thread.answeredAt = currentTimestamp();
+  thread.updatedAt = currentTimestamp();
+  thread.status = data.status || "waiting_marketplace";
+  thread.manager = state.currentManager;
+  thread.apiStatus = "відповідь зафіксована в CRM; очікує синхронізації з маркетплейсом";
+  addAudit(`${thread.marketplace}: відповідь у переписці з маркетплейсом ${thread.externalId || thread.requestId}`, state.currentManager);
+  form.closest(".modal-backdrop")?.remove();
+  render();
+}
+
+function externalCommunicationUrl(channel, receiver, text = "", order = {}) {
+  const encodedText = encodeURIComponent(text || "");
+  const phone = cleanPhone(receiver);
+  const phoneNoPlus = messengerPhone(receiver);
+  if (channel === "phone" || channel === "ip_telephony") return phone ? `tel:${phone}` : "";
+  if (channel === "viber") return phone ? `viber://chat?number=${encodeURIComponent(phone)}` : "";
+  if (channel === "sms") return phone ? `sms:${phone}?body=${encodedText}` : "";
+  if (channel === "email") return receiver ? `mailto:${encodeURIComponent(receiver)}?subject=${encodeURIComponent(`Замовлення ${order.externalOrderId || ""}`)}&body=${encodedText}` : "";
+  if (channel === "whatsapp") return phoneNoPlus ? `https://wa.me/${encodeURIComponent(phoneNoPlus)}?text=${encodedText}` : "";
+  if (channel === "telegram") return `https://t.me/share/url?url=&text=${encodedText}`;
+  return "";
+}
+
+function openExternalCommunication(channel, receiver, text = "", order = {}) {
+  const url = externalCommunicationUrl(channel, receiver, text, order);
+  if (!url) return;
+  const opened = window.open(url, "_blank");
+  if (!opened && !url.startsWith("http")) window.location.href = url;
+}
+
+function sendViberOrderMessage(id, customText = "") {
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  const settings = viberSettings();
+  if (!settings.enabled) return alert("Viber вимкнено в налаштуваннях комунікаторів.");
+  const receiver = viberReceiver(order);
+  if (!receiver) return alert("Для Viber потрібен receiver: Viber user id або тестовий номер покупця.");
+  if (settings.mode === "live" && !settings.authToken) {
+    return alert("Для бойового Viber API потрібно заповнити X-Viber-Auth-Token у налаштуваннях.");
+  }
+  const text = customText || fillViberTemplate(settings.defaultTemplate, order);
+  state.viberMessages.unshift({
+    id: uniqueId("viber"),
+    orderId: order.id,
+    externalOrderId: order.externalOrderId,
+    receiver,
+    text,
+    senderName: settings.senderName || "Marketplace CRM",
+    mode: settings.mode || "test",
+    status: settings.mode === "live" ? "queued API" : "test sent",
+    at: currentTimestamp(),
+    manager: order.manager || state.currentManager
+  });
+  recordCommunicationEvent({
+    type: "message",
+    channel: "viber",
+    orderId: order.id,
+    externalOrderId: order.externalOrderId,
+    receiver,
+    text,
+    status: settings.mode === "live" ? "Viber API: поставлено в чергу" : "Viber test: записано в CRM",
+    manager: order.manager || state.currentManager
+  });
+  order.workflow = order.workflow || normalizeMarketplaceWorkflow(order, order.status || "new_order", order.dates || {});
+  order.workflow.lastReminderAt = currentTimestamp();
+  addAudit(`Viber ${settings.mode === "live" ? "API" : "test"}: ${order.externalOrderId} → ${receiver}`, "system");
+  render();
+}
+
+function sendOrderMessage(form) {
+  if (!canContactMarketplaceBuyer()) return alert("Поточна роль не має права комунікувати з покупцем.");
+  const data = formData(form);
+  const order = byId(state.marketplaceOrders, data.orderId);
+  if (!order) return alert("Замовлення не знайдено.");
+  const channel = data.channel || "viber";
+  const receiver = data.receiver || communicationReceiver(order, channel);
+  const text = data.message || orderDefaultMessage(order);
+  if (!receiver) return alert("Вкажіть одержувача для вибраного комунікатора.");
+  if (channel === "viber") {
+    form.closest(".modal-backdrop")?.remove();
+    sendViberOrderMessage(order.id, text);
+    if (data.openExternal === "true") openExternalCommunication(channel, receiver, text, order);
+    return;
+  }
+  recordCommunicationEvent({
+    type: "message",
+    channel,
+    orderId: order.id,
+    externalOrderId: order.externalOrderId,
+    receiver,
+    text,
+    status: data.openExternal === "true" ? "відкрито зовнішній додаток" : "записано в CRM",
+    manager: order.manager || state.currentManager
+  });
+  order.workflow = order.workflow || normalizeMarketplaceWorkflow(order, order.status || "new_order", order.dates || {});
+  order.workflow.lastReminderAt = currentTimestamp();
+  addAudit(`Повідомлення ${communicatorLabel(channel)} по ${order.externalOrderId} → ${receiver}`);
+  form.closest(".modal-backdrop")?.remove();
+  if (data.openExternal === "true") openExternalCommunication(channel, receiver, text, order);
+  render();
+}
+
+async function startOrderCallback(form) {
+  if (!canContactMarketplaceBuyer()) return alert("Поточна роль не має права комунікувати з покупцем.");
+  const data = formData(form);
+  const order = byId(state.marketplaceOrders, data.orderId);
+  if (!order) return alert("Замовлення не знайдено.");
+  const channel = data.channel || "phone";
+  const receiver = data.receiver || communicationReceiver(order, channel);
+  if (!receiver) return alert("Вкажіть номер або receiver для дзвінка.");
+  recordCommunicationEvent({
+    type: "call",
+    channel,
+    orderId: order.id,
+    externalOrderId: order.externalOrderId,
+    receiver,
+    text: data.note || "",
+    status: data.openExternal === "true" ? "відкрито дзвінок" : "заплановано/зафіксовано",
+    manager: order.manager || state.currentManager
+  });
+  order.workflow = order.workflow || normalizeMarketplaceWorkflow(order, order.status || "new_order", order.dates || {});
+  order.workflow.lastReminderAt = currentTimestamp();
+  addAudit(`Передзвонити ${communicatorLabel(channel)} по ${order.externalOrderId} → ${receiver}`);
+  form.closest(".modal-backdrop")?.remove();
+  if (data.openExternal === "true") openExternalCommunication(channel, receiver, data.note || "", order);
+  if (data.recordCall === "true") {
+    await startCallRecording(order.id);
+  } else {
+    render();
+  }
+}
+
+function openViberChat(id) {
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  const buyer = marketplaceOrderBuyer(order);
+  if (!buyer.phone) return alert("У покупця немає телефону для відкриття Viber.");
+  const phone = String(buyer.phone).replace(/[^\d+]/g, "");
+  window.location.href = `viber://chat?number=${encodeURIComponent(phone)}`;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Не вдалося прочитати аудіо."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function startCallRecording(id) {
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  const settings = callRecordingSettings();
+  if (!settings.enabled) return alert("Запис розмов вимкнено в налаштуваннях.");
+  if (activeCallRecorder) return alert("Вже йде запис іншої розмови. Спочатку натисніть Стоп.");
+  if (settings.consentRequired) {
+    const confirmed = confirm("Підтвердіть, що покупець попереджений і дав згоду на запис розмови.");
+    if (!confirmed) return;
+    order.recordingConsent = true;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    return alert("Браузер не дав доступу до запису. Для LAN потрібен HTTPS або окреме підключення телефонії/API записів.");
+  }
+  try {
+    activeCallStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    activeCallChunks = [];
+    activeCallMeta = {
+      orderId: order.id,
+      externalOrderId: order.externalOrderId,
+      buyer: marketplaceOrderBuyer(order).name || "",
+      manager: order.manager || state.currentManager,
+      startedAt: currentTimestamp(),
+      startedIso: nowIso(),
+      consent: settings.consentRequired ? order.recordingConsent === true : true
+    };
+    activeCallRecorder = new MediaRecorder(activeCallStream);
+    activeCallRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) activeCallChunks.push(event.data);
+    });
+    activeCallRecorder.start();
+    addAudit(`Почато запис розмови ${order.externalOrderId}`, state.currentManager);
+    render();
+  } catch (error) {
+    activeCallStream?.getTracks?.().forEach((track) => track.stop());
+    activeCallRecorder = null;
+    activeCallStream = null;
+    activeCallMeta = null;
+    alert(`Не вдалося почати запис: ${error.message}`);
+  }
+}
+
+async function stopCallRecording(id = "") {
+  if (!activeCallRecorder || !activeCallMeta) return;
+  if (id && activeCallMeta.orderId !== id) return alert("Зараз записується інше замовлення.");
+  const recorder = activeCallRecorder;
+  const stream = activeCallStream;
+  const meta = activeCallMeta;
+  await new Promise((resolve) => {
+    recorder.addEventListener("stop", resolve, { once: true });
+    recorder.stop();
+  });
+  stream?.getTracks?.().forEach((track) => track.stop());
+  const blob = new Blob(activeCallChunks, { type: recorder.mimeType || "audio/webm" });
+  const dataUrl = await blobToDataUrl(blob);
+  const durationMs = Math.max(0, new Date().getTime() - new Date(meta.startedIso).getTime());
+  state.callRecordings.unshift({
+    id: uniqueId("rec"),
+    orderId: meta.orderId,
+    externalOrderId: meta.externalOrderId,
+    buyer: meta.buyer,
+    manager: meta.manager,
+    startedAt: meta.startedAt,
+    endedAt: currentTimestamp(),
+    durationMs,
+    mimeType: blob.type,
+    size: blob.size,
+    consent: meta.consent,
+    dataUrl
+  });
+  activeCallRecorder = null;
+  activeCallStream = null;
+  activeCallChunks = [];
+  activeCallMeta = null;
+  addAudit(`Збережено запис розмови ${meta.externalOrderId}, ${Math.round(durationMs / 1000)} с`, "system");
+  render();
+}
+
+function deleteCallRecording(id) {
+  state.callRecordings = state.callRecordings.filter((recording) => recording.id !== id);
+  addAudit(`Видалено запис розмови ${id}`, state.currentManager);
+  render();
+}
+
+function runMarketplaceOrderAutomationById(id) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права запускати автоматичну обробку замовлення.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  runMarketplaceOrderAutomation(order, { audit: true });
+  render();
+}
+
+function remindMarketplaceOrder(id) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права створювати нагадування по замовленню.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  order.workflow = order.workflow || normalizeMarketplaceWorkflow(order, order.status || "new_order", order.dates || {});
+  order.workflow.lastReminderAt = currentTimestamp();
+  addAudit(`Нагадування менеджеру ${order.manager}: ${order.externalOrderId} · ${order.workflow.nextAction || salesFunnelStage(order.status).reminder}`, "system");
+  render();
+}
+
+function markMarketplaceUpsell(id) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права переводити замовлення в апсел.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!statusAtLeast(order.status, "confirmed_by_client") || order.status === "cancelled") return alert("Апсел доступний після підтвердження замовлення клієнтом.");
+  const hadOrderModal = Boolean(document.querySelector('.modal-backdrop [data-action="update-marketplace-order"]'));
+  ensureClientFromMarketplaceOrder(order);
+  setMarketplaceOrderWorkflowStage(order, "upsell", { nextAction: "Запропонувати супутній товар, комплект або витратні матеріали." });
+  order.workflow.upsellOfferedAt = currentTimestamp();
+  addAudit(`Апсел запущено по ${order.externalOrderId} для клієнта ${clientName(order.clientId)}`);
+  refreshMarketplaceOrderAfterAction(order.id);
+  if (!hadOrderModal) editMarketplaceOrderDocument(order.id);
+}
+
+function markMarketplaceAftersale(id) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права переводити замовлення у післяпродажний контакт.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!statusAtLeast(order.status, "completed") || order.status === "cancelled") return alert("Follow-up доступний після завершення продажу.");
+  ensureClientFromMarketplaceOrder(order);
+  setMarketplaceOrderWorkflowStage(order, "follow_up", { nextAction: "Зв'язатися з покупцем: відгук, гарантія, сервіс, додаткові потреби." });
+  order.workflow.aftersaleContactedAt = currentTimestamp();
+  addAudit(`Післяпродажний контакт заплановано по ${order.externalOrderId} для ${clientName(order.clientId)}`);
+  refreshMarketplaceOrderAfterAction(order.id);
+}
+
+function markMarketplaceRepeatSale(id) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права планувати повторний продаж.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (!statusAtLeast(order.status, "follow_up") || order.status === "cancelled") return alert("Повторний продаж доступний після Follow-up.");
+  ensureClientFromMarketplaceOrder(order);
+  setMarketplaceOrderWorkflowStage(order, "repeat_sale", { nextAction: "Поставити клієнта в повторну пропозицію та персональну добірку." });
+  order.workflow.repeatSalePlannedAt = currentTimestamp();
+  addAudit(`Повторний продаж заплановано по ${order.externalOrderId} для ${clientName(order.clientId)}`);
+  refreshMarketplaceOrderAfterAction(order.id);
+}
+
+function completeMarketplaceOrder(id) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права завершувати замовлення.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (order.status === "cancelled") return alert("Скасоване замовлення не можна завершити.");
+  if (!statusAtLeast(order.status, "delivered")) return alert("Спочатку підтвердіть доставку замовлення.");
+  setMarketplaceOrderWorkflowStage(order, "completed", { nextAction: "Закрити продаж і запланувати післяпродажний контакт." });
+  addAudit(`Продаж ${order.externalOrderId} завершено`);
+  refreshMarketplaceOrderAfterAction(order.id);
+}
+
+function cancelMarketplaceOrder(id) {
+  if (!canManageMarketplaceOrder()) return alert("Поточна роль не має права скасовувати замовлення.");
+  const order = byId(state.marketplaceOrders, id);
+  if (!order) return;
+  if (order.status === "cancelled") return;
+  if (!window.confirm(`Скасувати замовлення ${order.externalOrderId}?`)) return;
+  setMarketplaceOrderWorkflowStage(order, "cancelled", { nextAction: "Зафіксувати причину скасування і, якщо потрібно, повернути резерв складу." });
+  order.payment = { ...(order.payment || {}), status: order.payment?.status === "paid" ? "paid" : "failed", apiStatus: order.payment?.apiStatus || "Замовлення скасовано в CRM" };
+  order.delivery = { ...(order.delivery || {}), apiStatus: "Замовлення скасовано в CRM" };
+  addAudit(`Замовлення ${order.externalOrderId} скасовано`);
+  refreshMarketplaceOrderAfterAction(order.id);
+}
+
+function checkedFormValues(form, name) {
+  return $$(`input[name="${CSS.escape(name)}"]:checked`, form).map((input) => input.value);
+}
+
+function updateDataExchangeFormVisibility(form) {
+  if (!form) return;
+  const channel = form.elements.channel?.value || "marketplaces";
+  const mode = form.elements.mode?.value || "all";
+  const panel = form.closest("[data-data-exchange-panel]") || form;
+  $$("[data-exchange-channel-panel]", form).forEach((panel) => {
+    panel.hidden = panel.dataset.exchangeChannelPanel !== channel;
+  });
+  $$("[data-exchange-embedded-rozetka]", panel).forEach((element) => {
+    element.hidden = channel === "bas";
+  });
+  $$("[data-onec-exchange-tools]", panel).forEach((element) => {
+    element.hidden = channel !== "bas";
+  });
+  const summary = $(".exchange-summary span", form);
+  const summaryTitle = $(".exchange-summary strong", form);
+  if (summaryTitle) {
+    summaryTitle.textContent = channel === "bas" ? "1C / BAS / BAF" : "Маркетплейси";
+  }
+  if (summary) {
+    summary.textContent = mode === "selective"
+      ? "CRM обмінює тільки вибрані блоки даних."
+      : "CRM обмінює весь доступний набір даних цього каналу.";
+  }
+}
+
+function updateDataExchange(form) {
+  if (!canCreateDocument("dataExchange") || !canEditField("dataExchangeScope")) {
+    return alert("Поточна роль не має права змінювати налаштування обміну даними.");
+  }
+  const data = formData(form);
+  const current = dataExchangeState();
+  const currentNovaPay = novaPaySettings();
+  state.settings.dataExchange = {
+    channel: data.channel === "bas" ? "bas" : "marketplaces",
+    mode: data.mode === "selective" ? "selective" : "all",
+    marketplaceIds: checkedFormValues(form, "marketplaceIds"),
+    marketplaceData: checkedFormValues(form, "marketplaceData"),
+    basData: checkedFormValues(form, "basData"),
+    oneCConnection: {
+      ...(current.oneCConnection || {}),
+      system: data.oneCSystem || current.oneCConnection.system || "1c_utp_ukraine_1_2",
+      transport: data.oneCTransport || current.oneCConnection.transport || "file_json",
+      server: String(data.oneCServer || "").trim() || "192.168.0.5",
+      infobase: String(data.oneCInfobase || "").trim(),
+      endpoint: String(data.oneCEndpoint || "").trim(),
+      format: data.oneCFormat === "xml" ? "xml" : "json",
+      login: String(data.oneCLogin || "").trim(),
+      password: data.oneCPassword ? String(data.oneCPassword) : (current.oneCConnection.password || "")
+    }
+  };
+  state.settings.novaPay = {
+    ...currentNovaPay,
+    enabled: data.novaPayEnabled !== "false",
+    mode: data.novaPayMode === "production" ? "production" : "test",
+    gatewayUrl: String(data.novaPayGatewayUrl || "/api/novapay/payments").trim() || "/api/novapay/payments",
+    merchantId: String(data.novaPayMerchantId || "").trim(),
+    accountId: String(data.novaPayAccountId || "").trim(),
+    autoCreatePayments: data.novaPayAutoCreatePayments !== "false",
+    lastMessage: currentNovaPay.lastMessage || "NovaPay gateway налаштовано без збереження приватного ключа в браузері."
+  };
+  addAudit(`Оновлено обмін даними: ${state.settings.dataExchange.channel === "bas" ? "1C / BAS / BAF" : "маркетплейси"}, ${state.settings.dataExchange.mode === "selective" ? "вибірково" : "вся інформація"}`);
+  render();
+}
+
+function updateNovaPaySettings(form) {
+  if (!canManageNovaPayApi()) return alert("Поточна роль не має права змінювати NovaPay API.");
+  const data = formData(form);
+  const current = novaPaySettings();
+  state.settings.novaPay = {
+    ...current,
+    enabled: data.novaPayEnabled !== "false",
+    mode: data.novaPayMode === "production" ? "production" : "test",
+    gatewayUrl: String(data.novaPayGatewayUrl || "/api/novapay/payments").trim() || "/api/novapay/payments",
+    merchantId: String(data.novaPayMerchantId || "").trim(),
+    accountId: String(data.novaPayAccountId || "").trim(),
+    autoCreatePayments: data.novaPayAutoCreatePayments !== "false",
+    status: current.status || "not_configured",
+    lastMessage: "NovaPay API підключення оновлено. Приватний ключ не зберігається в браузері."
+  };
+  addAudit(`Оновлено NovaPay API gateway: ${state.settings.novaPay.gatewayUrl}`, "system");
+  render();
+}
+
+function updateSalesFunnel(form) {
+  if (!(role().canEditSettings || isAdmin())) return alert("Поточна роль не має права змінювати воронки.");
+  const data = formData(form);
+  state.settings.salesFunnel = DEFAULT_SALES_FUNNEL.map((stage) => {
+    const slaHours = Number(data[`sla_${stage.id}`] || stage.slaHours);
+    const className = SALES_FUNNEL_CLASS_OPTIONS.some(([value]) => value === data[`class_${stage.id}`])
+      ? data[`class_${stage.id}`]
+      : stage.className;
+    return {
+      ...stage,
+      label: String(data[`label_${stage.id}`] || stage.label).trim() || stage.label,
+      description: String(data[`description_${stage.id}`] || SALES_FUNNEL_DESCRIPTIONS[stage.id] || "").trim(),
+      menuLocation: String(data[`menu_${stage.id}`] || SALES_FUNNEL_WORKFLOW_RULES[stage.id]?.menuLocation || "").trim(),
+      entryCondition: String(data[`entry_${stage.id}`] || SALES_FUNNEL_WORKFLOW_RULES[stage.id]?.entryCondition || "").trim(),
+      completionCondition: String(data[`completion_${stage.id}`] || SALES_FUNNEL_WORKFLOW_RULES[stage.id]?.completionCondition || "").trim(),
+      switchBy: String(data[`switch_${stage.id}`] || SALES_FUNNEL_WORKFLOW_RULES[stage.id]?.switchBy || "").trim(),
+      className,
+      slaHours: Number.isFinite(slaHours) && slaHours > 0 ? slaHours : stage.slaHours,
+      reminder: String(data[`reminder_${stage.id}`] || stage.reminder).trim() || stage.reminder,
+      active: data[`active_${stage.id}`] !== "false"
+    };
+  });
+  state.marketplaceOrders.forEach((order) => {
+    const stage = salesFunnelStage(order.status);
+    const startedAt = order.workflow?.stageStartedAt || nowIso();
+    order.workflow = {
+      ...(order.workflow || {}),
+      reminderAt: addHoursIso(startedAt, stage.slaHours),
+      nextAction: stage.reminder
+    };
+  });
+  addAudit("Оновлено умови, SLA та нагадування менеджерської воронки продажів");
+  render();
+}
+
+function updateCommunicators(form) {
+  if (!(role().canEditSettings || isAdmin())) return alert("Поточна роль не має права змінювати комунікатори.");
+  const data = formData(form);
+  const retentionDays = Number(data.recordingRetentionDays || 180);
+  state.settings.communicators = {
+    viber: {
+      enabled: data.viberEnabled !== "false",
+      mode: data.viberMode === "live" ? "live" : "test",
+      senderName: data.viberSenderName || "Marketplace CRM",
+      authToken: data.viberAuthToken || "",
+      webhookUrl: data.viberWebhookUrl || "",
+      defaultTemplate: data.viberDefaultTemplate || seedState.settings.communicators.viber.defaultTemplate
+    },
+    callRecording: {
+      enabled: data.recordingEnabled !== "false",
+      consentRequired: data.recordingConsentRequired !== "false",
+      retentionDays: Number.isFinite(retentionDays) && retentionDays > 0 ? retentionDays : 180,
+      source: data.recordingSource === "telephony" ? "telephony" : "browser_microphone"
+    }
+  };
+  addAudit(`Оновлено комунікатори: Viber ${state.settings.communicators.viber.mode}, запис ${state.settings.communicators.callRecording.enabled ? "увімкнено" : "вимкнено"}`);
+  render();
 }
 
 function updateRates(form) {
@@ -9921,6 +18510,30 @@ function updateRates(form) {
   });
   state.settings.rates = normalizeExchangeRates(rates);
   addAudit("Оновлено курси валют");
+  render();
+}
+
+function updateDeliveryApiSettings(form) {
+  if (!(role().canEditSettings || isAdmin())) return alert("Налаштування API доставок змінює тільки адміністратор.");
+  const data = formData(form);
+  const settings = deliveryApiSettings();
+  ["nova_poshta", "ukrposhta"].forEach((key) => {
+    const enabled = key === "nova_poshta" ? true : data[`${key}_enabled`] === "true";
+    const apiKey = key === "nova_poshta" ? "" : String(data[`${key}_apiKey`] || "").trim();
+    settings[key] = {
+      ...settings[key],
+      enabled,
+      mode: key === "nova_poshta" ? "production" : data[`${key}_mode`] === "production" ? "production" : "test",
+      apiKey,
+      endpoint: key === "nova_poshta" ? "/api/delivery/nova-poshta/track" : String(data[`${key}_endpoint`] || "").trim(),
+      serverGateway: key === "nova_poshta" ? true : Boolean(settings[key]?.serverGateway),
+      status: key === "nova_poshta" ? "server_gateway" : enabled && apiKey ? "ok" : "not_configured",
+      lastCheck: currentTimestamp()
+    };
+  });
+  settings.nova_poshta = novaPoshtaServerGatewaySettings(settings.nova_poshta);
+  addAudit("Оновлено API доставок Нова пошта / Укрпошта", "system");
+  saveState();
   render();
 }
 
@@ -10184,6 +18797,7 @@ function openModal(title, body) {
   prepareDecimalInputs(modal);
   applyRoleFieldLocks(modal);
   attachFieldSuggestions();
+  attachLinkedRequisiteInputs(modal);
   return modal;
 }
 
@@ -10268,7 +18882,7 @@ function printScope(key) {
   if (!canPrintDocuments()) return alert("Поточна роль не має права друку документів та звітів.");
   const scope = document.querySelector(`[data-print-area="${key}"]`);
   if (!scope) return alert("Не знайдено область для друку.");
-  const title = scope.dataset.printTitle || "Arms CRM";
+  const title = scope.dataset.printTitle || "Marketplace CRM";
   const styleHref = document.querySelector('link[rel="stylesheet"]')?.href || "";
   const printWindow = window.open("", "_blank", "width=1200,height=800");
   if (!printWindow) {
@@ -10311,7 +18925,7 @@ function downloadJson(filename, value) {
 function basPurchasePayload(purchases) {
   return {
     exportedAt: `${today}T00:00:00+03:00`,
-    source: "Arms CRM",
+    source: "Marketplace CRM",
     target: "BAS/BAF",
     purchases: purchases.map((purchase) => {
       const product = byId(state.products, purchase.productId);
@@ -10389,10 +19003,1191 @@ function importBasPurchases(form) {
   }
 }
 
+function oneCSelectedDataKeys(settings = dataExchangeState()) {
+  const allKeys = DATA_EXCHANGE_BAS_DATA.map(([key]) => key);
+  if (settings.mode !== "selective") return allKeys;
+  const selected = new Set(settings.basData || []);
+  return allKeys.filter((key) => selected.has(key));
+}
+
+function oneCConnectionPayload(settings = dataExchangeState()) {
+  const connection = settings.oneCConnection || {};
+  return {
+    system: connection.system || "1c_utp_ukraine_1_2",
+    transport: connection.transport || "file_json",
+    server: connection.server || "192.168.0.5",
+    infobase: connection.infobase || "",
+    endpoint: connection.endpoint || "",
+    format: connection.format || "json",
+    login: connection.login || "",
+    auth: connection.password ? "password_configured_locally" : "not_configured"
+  };
+}
+
+function oneCProductRows() {
+  return state.products.map((product) => ({
+    crmId: product.id,
+    name: `${product.brand || ""} ${product.model || ""}`.trim() || product.model || product.id,
+    type: product.type || "goods",
+    brand: product.brand || "",
+    model: product.model || "",
+    caliber: product.caliber || "",
+    category: product.category || "",
+    unit: product.unit || "шт",
+    internalCode: product.internalCode || "",
+    barcode: product.barcode || product.qrCode || "",
+    supplierSku: product.supplierSku || "",
+    uktzed: product.uktzed || "",
+    price: Number(product.price || 0),
+    currency: product.currency || "UAH",
+    cost: Number(product.cost || 0),
+    costCurrency: product.costCurrency || product.currency || "UAH",
+    minStock: Number(product.minStock || 0),
+    leadTimeDays: Number(product.leadTimeDays || 0)
+  }));
+}
+
+function oneCClientRows() {
+  return state.clients.map((client) => ({
+    crmId: client.id,
+    name: client.name,
+    type: client.type || "",
+    edrpou: client.edrpou || "",
+    phone: client.phone || "",
+    email: client.email || "",
+    address: client.address || "",
+    manager: client.manager || "",
+    priceType: client.priceType || "",
+    currency: client.currency || "UAH",
+    taxMode: client.taxMode || "",
+    paymentTerms: Number(client.paymentTerms || 0),
+    creditLimitUAH: Number(client.creditLimitUAH || 0)
+  }));
+}
+
+function oneCOrderRows() {
+  return state.marketplaceOrders.map((order) => {
+    const buyer = marketplaceOrderBuyer(order);
+    const status = normalizeMarketplaceOrderStatus(order.status);
+    const lines = marketplaceOrderLines(order);
+    const firstLine = lines[0] || {};
+    return {
+      crmId: order.id,
+      externalOrderId: order.externalOrderId || order.id,
+      date: order.date || today,
+      marketplace: order.marketplace || "",
+      status,
+      statusLabel: salesFunnelStage(status).label,
+      manager: order.manager || "",
+      clientCrmId: order.clientId || "",
+      buyer: {
+        name: buyer.name || "",
+        phone: buyer.phone || "",
+        email: buyer.email || ""
+      },
+      productCrmId: firstLine.productId || order.productId || "",
+      product: marketplaceOrderProductsSummary(order),
+      sku: firstLine.sku || order.sku || "",
+      qty: Number(firstLine.qty || order.qty || 1),
+      price: Number(firstLine.price || order.price || 0),
+      currency: order.currency || "UAH",
+      total: marketplaceOrderTotal(order),
+      lines: lines.map((line) => ({
+        productCrmId: line.productId || "",
+        product: productName(line.productId),
+        sku: line.sku || "",
+        qty: Number(line.qty || 1),
+        price: Number(line.price || 0),
+        currency: line.currency || order.currency || "UAH",
+        total: marketplaceOrderLineTotal(line, order.currency || line.currency || "UAH"),
+        comment: line.comment || ""
+      })),
+      payment: order.payment || {},
+      delivery: order.delivery || {},
+      workflow: order.workflow || {}
+    };
+  });
+}
+
+function oneCSalesDocRows() {
+  return state.invoices.map((invoice) => ({
+    crmId: invoice.id,
+    date: invoice.date,
+    firmId: invoice.firmId,
+    firm: firmName(invoice.firmId),
+    channel: invoice.channel || "",
+    clientCrmId: invoice.clientId,
+    client: clientName(invoice.clientId),
+    manager: invoice.manager || "",
+    currency: invoice.currency || "UAH",
+    total: Number(invoice.total || 0),
+    paid: Number(invoice.paid || 0),
+    debt: invoiceDebt(invoice),
+    dueDate: invoice.dueDate || "",
+    status: invoice.status || "",
+    delivery: invoice.delivery || "",
+    ttn: invoice.ttn || "",
+    lines: (invoice.lines || []).map((line) => ({
+      productCrmId: line.productId,
+      product: productName(line.productId),
+      qty: Number(line.qty || 0),
+      price: Number(line.price || 0),
+      currency: line.currency || invoice.currency || "UAH",
+      serialIds: line.serialIds || []
+    }))
+  }));
+}
+
+function oneCShipmentRows() {
+  const orderShipments = state.marketplaceOrders
+    .filter((order) => order.delivery?.ttn || ["shipped", "delivered", "completed", "follow_up", "repeat_sale"].includes(normalizeMarketplaceOrderStatus(order.status)))
+    .map((order) => ({
+      source: "marketplace_order",
+      crmOrderId: order.id,
+      externalOrderId: order.externalOrderId || order.id,
+      marketplace: order.marketplace || "",
+      date: order.dates?.delivery || order.date || today,
+      status: normalizeMarketplaceOrderStatus(order.status),
+      ttn: order.delivery?.ttn || "",
+      deliveryService: order.delivery?.service || order.delivery?.method || "",
+      recipient: marketplaceOrderBuyer(order).name || "",
+      phone: marketplaceOrderBuyer(order).phone || "",
+      amount: marketplaceOrderTotal(order),
+      currency: order.currency || "UAH"
+    }));
+  const invoiceShipments = state.invoices
+    .filter((invoice) => invoice.ttn || invoice.delivery)
+    .map((invoice) => ({
+      source: "invoice",
+      invoiceId: invoice.id,
+      date: invoice.date,
+      status: invoice.status || "",
+      ttn: invoice.ttn || "",
+      deliveryService: invoice.delivery || "",
+      clientCrmId: invoice.clientId,
+      client: clientName(invoice.clientId),
+      amount: Number(invoice.total || 0),
+      currency: invoice.currency || "UAH"
+    }));
+  return [...orderShipments, ...invoiceShipments];
+}
+
+function oneCPaymentRows() {
+  return state.payments.map((payment) => {
+    const link = financePaymentLink(payment);
+    return {
+      crmId: payment.id,
+      invoiceId: payment.invoiceId || link.invoice?.id || "",
+      marketplaceOrderId: payment.marketplaceOrderId || link.order?.id || "",
+      externalOrderId: payment.externalOrderId || link.order?.externalOrderId || "",
+      marketplace: payment.marketplace || link.order?.marketplace || "",
+      ttn: link.ttn || "",
+      clientId: payment.clientId || link.invoice?.clientId || "",
+      client: financePaymentClientText(payment, link),
+      firmId: payment.firmId || link.invoice?.firmId || "",
+      firm: payment.firmId || link.invoice?.firmId ? firmName(payment.firmId || link.invoice?.firmId) : "",
+      terminalId: payment.terminalId || "",
+      terminal: payment.terminalId ? terminalName(payment.terminalId) : "",
+      prro: payment.prro === true,
+      paymentKind: payment.paymentKind || (payment.invoiceId || link.invoice ? "invoice" : "advance"),
+      source: payment.source || "",
+      date: payment.date || today,
+      amount: Number(payment.amount || 0),
+      currency: payment.currency || "UAH",
+      rate: Number(payment.rate || 1),
+      method: payment.method || payment.source || "",
+      bankRef: payment.bankRef || "",
+      novaPayTransactionId: payment.novaPayTransactionId || link.novaPayTransaction?.id || "",
+      comment: payment.comment || "",
+      status: payment.status || "paid"
+    };
+  });
+}
+
+function oneCReceivableRows() {
+  return state.invoices
+    .filter((invoice) => invoiceDebt(invoice) > 0)
+    .map((invoice) => ({
+      invoiceId: invoice.id,
+      date: invoice.date,
+      dueDate: invoice.dueDate || "",
+      clientCrmId: invoice.clientId,
+      client: clientName(invoice.clientId),
+      manager: invoice.manager || "",
+      total: Number(invoice.total || 0),
+      paid: Number(invoice.paid || 0),
+      debt: invoiceDebt(invoice),
+      currency: invoice.currency || "UAH",
+      overdue: invoice.dueDate ? invoice.dueDate < today : false
+    }));
+}
+
+function oneCPayableRows() {
+  return (state.payables || []).map((payable) => ({
+    crmId: payable.id,
+    supplier: payable.supplier || "",
+    manager: payable.manager || "",
+    article: payable.article || "",
+    amount: Number(payable.amount || 0),
+    currency: payable.currency || "UAH",
+    dueDate: payable.dueDate || "",
+    status: payable.status || "open",
+    comment: payable.comment || ""
+  }));
+}
+
+function oneCStockRows() {
+  return inventoryRows().map((row) => ({
+    productCrmId: row.product.id,
+    product: `${row.product.brand || ""} ${row.product.model || ""}`.trim(),
+    internalCode: row.product.internalCode || "",
+    barcode: row.product.barcode || row.product.qrCode || "",
+    warehouseId: row.warehouseId,
+    warehouse: warehouseName(row.warehouseId),
+    firmId: row.firmId || "vat",
+    firm: firmName(row.firmId || "vat"),
+    clientCrmId: row.clientId || "",
+    qty: Number(row.qty || 0),
+    unit: row.product.unit || "шт",
+    valueUAH: Number(row.valueUAH || 0)
+  }));
+}
+
+function oneCStockMoveRows() {
+  const receiptRows = state.purchases.map((purchase) => ({
+    source: "purchase",
+    documentId: purchase.id,
+    date: purchase.date,
+    direction: "in",
+    productCrmId: purchase.productId,
+    product: productName(purchase.productId),
+    warehouseId: purchase.warehouseId,
+    firmId: purchase.firmId,
+    qty: Number(purchase.qty || 0),
+    cost: Number(purchase.cost || 0),
+    currency: purchase.currency || "UAH"
+  }));
+  const saleRows = state.invoices.flatMap((invoice) => (invoice.lines || []).map((line) => ({
+    source: "invoice",
+    documentId: invoice.id,
+    date: invoice.date,
+    direction: "out",
+    productCrmId: line.productId,
+    product: productName(line.productId),
+    warehouseId: line.warehouseId || "wh-main",
+    firmId: invoice.firmId,
+    qty: Number(line.qty || 0),
+    price: Number(line.price || 0),
+    currency: line.currency || invoice.currency || "UAH"
+  })));
+  return [...receiptRows, ...saleRows];
+}
+
+function oneCExpenseRows() {
+  return (state.expenses || []).map((expense) => ({
+    crmId: expense.id,
+    date: expense.date,
+    article: expense.article || "",
+    amount: Number(expense.amount || 0),
+    currency: expense.currency || "UAH",
+    method: expense.method || "",
+    manager: expense.manager || "",
+    supplier: expense.supplier || "",
+    comment: expense.comment || ""
+  }));
+}
+
+function oneCPurchaseRows() {
+  return basPurchasePayload(state.purchases).purchases;
+}
+
+function oneCExportPayload() {
+  const settings = dataExchangeState();
+  const selectedData = oneCSelectedDataKeys(settings);
+  const payload = {
+    schema: "marketplace-crm.onec.exchange.v1",
+    generatedAt: currentTimestamp(),
+    source: "Marketplace CRM",
+    target: settings.oneCConnection?.system === "bas_baf" ? "BAS/BAF" : "1C УТП Україна 1.2",
+    direction: "CRM_TO_1C",
+    selectedData,
+    connection: oneCConnectionPayload(settings),
+    meta: {
+      version: APP_VERSION,
+      build: APP_BUILD,
+      counts: {}
+    }
+  };
+  const blocks = {
+    products: oneCProductRows,
+    clients: oneCClientRows,
+    orders: oneCOrderRows,
+    salesDocs: oneCSalesDocRows,
+    shipments: oneCShipmentRows,
+    payments: oneCPaymentRows,
+    receivables: oneCReceivableRows,
+    payables: oneCPayableRows,
+    purchaseDocs: oneCPurchaseRows,
+    stock: oneCStockRows,
+    stockMoves: oneCStockMoveRows,
+    expenses: oneCExpenseRows
+  };
+  selectedData.forEach((key) => {
+    if (!blocks[key]) return;
+    payload[key] = blocks[key]();
+    payload.meta.counts[key] = payload[key].length;
+  });
+  return payload;
+}
+
+function updateOneCConnectionStatus(updates) {
+  const settings = dataExchangeState();
+  state.settings.dataExchange = {
+    ...settings,
+    oneCConnection: {
+      ...(settings.oneCConnection || {}),
+      ...updates
+    }
+  };
+}
+
+function exportOneCPackage() {
+  if (!canCreateDocument("dataExchange") || !canEditField("dataExchangeScope")) {
+    return alert("Поточна роль не має права експортувати пакет 1C.");
+  }
+  const payload = oneCExportPayload();
+  downloadJson(`onec-utp-exchange-${today}.json`, payload);
+  updateOneCConnectionStatus({
+    lastExport: currentTimestamp(),
+    lastStatus: "exported",
+    lastMessage: `OK: сформовано JSON-пакет для 1C, блоків: ${payload.selectedData.length}.`
+  });
+  addAudit(`Сформовано пакет обміну з 1C: ${payload.selectedData.join(", ")}`, "system");
+  render();
+}
+
+function oneCBridgeSpecPayload() {
+  return {
+    schema: "marketplace-crm.onec.bridge-spec.v1",
+    generatedAt: currentTimestamp(),
+    purpose: "Шлюз для майбутнього HTTP-обміну Marketplace CRM з 1C УТП / BAS / BAF у внутрішній мережі через VPN.",
+    recommendedStart: "file_json",
+    endpointBase: dataExchangeState().oneCConnection?.endpoint || "http://192.168.0.5/arms-crm/exchange",
+    endpoints: [
+      { method: "GET", path: "/export", direction: "CRM_TO_1C", description: "CRM віддає пакет onec.exchange.v1" },
+      { method: "POST", path: "/import", direction: "1C_TO_CRM", description: "1C повертає товари, клієнтів, оплати, залишки, відвантаження, дебіторку, кредиторку" },
+      { method: "GET", path: "/health", direction: "CHECK", description: "Перевірка доступності шлюзу у VPN" }
+    ],
+    keys: DATA_EXCHANGE_BAS_DATA.map(([key, label]) => ({ key, label })),
+    identifiers: ["crmId", "externalOrderId", "invoiceId", "internalCode", "barcode", "edrpou", "phone"],
+    importContract: {
+      products: "оновлення/створення товарів за crmId, internalCode або barcode",
+      clients: "оновлення/створення клієнтів за crmId, edrpou, phone, email або name",
+      payments: "створення оплат без дублювання за crmId/id або bankRef",
+      receivables: "оновлення paid/debt по invoiceId",
+      payables: "оновлення/створення кредиторки",
+      shipments: "оновлення ТТН і статусів замовлень за crmOrderId або externalOrderId",
+      stock: "оновлення залишків за товаром, складом і фірмою"
+    },
+    sampleExport: oneCExportPayload()
+  };
+}
+
+function downloadOneCBridgeSpec() {
+  downloadJson(`onec-bridge-spec-${today}.json`, oneCBridgeSpecPayload());
+  addAudit("Завантажено схему HTTP-шлюзу для 1C / BAS / BAF", "system");
+}
+
+function oneCImportRows(payload, key) {
+  const value = payload?.[key] || payload?.data?.[key] || payload?.reply?.[key] || payload?.payload?.[key];
+  if (Array.isArray(value)) return value;
+  return value && typeof value === "object" ? [value] : [];
+}
+
+function oneCCombinedRows(payload, keys) {
+  const rows = [];
+  keys.forEach((key) => rows.push(...oneCImportRows(payload, key)));
+  return rows;
+}
+
+function oneCRowText(row, keys, fallback = "") {
+  const keyList = Array.isArray(keys) ? keys : [keys];
+  for (const key of keyList) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") return String(value).trim();
+  }
+  return fallback;
+}
+
+function oneCRowNumber(row, keys, fallback = 0) {
+  const keyList = Array.isArray(keys) ? keys : [keys];
+  for (const key of keyList) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && value !== "") {
+      const normalized = typeof value === "string" ? value.replace(/\s/g, "").replace(",", ".") : value;
+      const number = Number(normalized);
+      if (Number.isFinite(number)) return number;
+    }
+  }
+  return fallback;
+}
+
+function findProductForOneC(row) {
+  const id = oneCRowText(row, ["crmId", "productCrmId", "productId", "id", "oneCRef", "one_c_ref", "externalId"]);
+  const internalCode = oneCRowText(row, ["internalCode", "internal_code", "sku", "productCode", "product_code", "code", "article"]);
+  const barcode = oneCRowText(row, ["barcode", "barCode", "ean"]);
+  return byId(state.products, id)
+    || state.products.find((product) => internalCode && product.internalCode === internalCode)
+    || state.products.find((product) => barcode && [product.barcode, product.qrCode].includes(barcode));
+}
+
+function upsertOneCProduct(row) {
+  let product = findProductForOneC(row);
+  const externalId = oneCRowText(row, ["externalId", "external_id", "id"], "");
+  const oneCRef = oneCRowText(row, ["oneCRef", "one_c_ref", "ref"], "");
+  const sourceFile = oneCRowText(row, ["sourceFile", "source_file"], "");
+  const importedAt = oneCRowText(row, ["importedAt", "imported_at"], currentTimestamp());
+  const importedBrand = cleanImportedSourceBrand(oneCRowText(row, ["brand", "producer", "manufacturer"], ""));
+  const importedName = cleanImportedProductName(oneCRowText(row, ["model", "name", "title", "productName", "product_name"], "Товар 1C"));
+  const importedCategory = oneCRowText(row, ["productGroupName", "product_group_name", "category", "group", "categoryName", "category_name"], "1C імпорт");
+  if (!product) {
+    product = {
+      id: oneCRowText(row, ["crmId", "productCrmId", "productId", "id", "oneCRef", "one_c_ref", "externalId"], uniqueId("p")),
+      type: oneCRowText(row, ["type", "productType", "product_type"], "goods"),
+      model: importedName,
+      brand: importedBrand,
+      barcode: oneCRowText(row, ["barcode", "barCode", "ean"]),
+      supplierSku: oneCRowText(row, ["supplierSku", "supplier_sku", "article", "sku"]),
+      internalCode: oneCRowText(row, ["internalCode", "internal_code", "sku", "productCode", "product_code", "code", "article"]),
+      category: importedCategory,
+      productGroupCode: oneCRowText(row, ["productGroupCode", "product_group_code", "categoryId", "category_id"]),
+      productGroupRef: oneCRowText(row, ["productGroupRef", "product_group_ref"]),
+      unit: oneCRowText(row, ["unit", "unitName", "unit_name"], "шт"),
+      price: 0,
+      currency: "UAH",
+      cost: 0,
+      costCurrency: "UAH",
+      minStock: 0,
+      leadTimeDays: 0,
+      description: oneCRowText(row, ["description", "comment"], ""),
+      photos: [],
+      externalId,
+      oneCRef,
+      sourceType: "sql_1c",
+      sourceName: "SQL / 1C",
+      createdFrom: "sql_1c",
+      sourceFile,
+      importedAt
+    };
+    state.products.push(product);
+  }
+  product.model = cleanImportedProductName(oneCRowText(row, ["model", "name", "title", "productName", "product_name"], product.model));
+  product.brand = importedBrand || cleanImportedSourceBrand(product.brand);
+  product.type = oneCRowText(row, ["type", "productType", "product_type"], product.type);
+  product.category = oneCRowText(row, ["productGroupName", "product_group_name", "category", "group", "categoryName", "category_name"], product.category);
+  product.productGroupCode = oneCRowText(row, ["productGroupCode", "product_group_code", "categoryId", "category_id"], product.productGroupCode || "");
+  product.productGroupRef = oneCRowText(row, ["productGroupRef", "product_group_ref"], product.productGroupRef || "");
+  product.unit = oneCRowText(row, ["unit", "unitName", "unit_name"], product.unit);
+  product.barcode = oneCRowText(row, ["barcode", "barCode", "ean"], product.barcode);
+  product.supplierSku = oneCRowText(row, ["supplierSku", "supplier_sku", "article", "sku"], product.supplierSku);
+  product.internalCode = oneCRowText(row, ["internalCode", "internal_code", "sku", "productCode", "product_code", "code", "article"], product.internalCode);
+  product.uktzed = oneCRowText(row, ["uktzed", "uktzedCode", "uktzed_code"], product.uktzed || "");
+  product.description = oneCRowText(row, ["description", "comment"], product.description || "");
+  product.currency = oneCRowText(row, ["currency", "latestPriceCurrency", "latest_price_currency"], product.currency || "UAH");
+  applyImportedProductPrice(product, oneCRowNumber(row, ["price", "salePrice", "sale_price", "latestPrice", "latest_price"], product.price || 0), product.currency);
+  product.cost = oneCRowNumber(row, ["cost", "purchasePrice", "purchase_price"], product.cost || 0);
+  product.costCurrency = oneCRowText(row, ["costCurrency", "cost_currency"], product.costCurrency || product.currency || "UAH");
+  product.minStock = oneCRowNumber(row, ["minStock", "min_stock"], product.minStock || 0);
+  product.leadTimeDays = oneCRowNumber(row, ["leadTimeDays", "lead_time_days"], product.leadTimeDays || 0);
+  product.externalId = externalId || product.externalId || "";
+  product.oneCRef = oneCRef || product.oneCRef || "";
+  product.sourceType = "sql_1c";
+  product.sourceName = "SQL / 1C";
+  product.createdFrom = product.createdFrom || "sql_1c";
+  product.sourceFile = sourceFile || product.sourceFile || "";
+  product.importedAt = importedAt || product.importedAt || currentTimestamp();
+  return normalizeProductRequisites(product);
+}
+
+function findClientForOneC(row) {
+  const id = oneCRowText(row, ["crmId", "clientCrmId", "clientId", "customerId", "counterpartyCode", "counterparty_code", "id", "externalId"]);
+  const taxId = oneCRowText(row, ["edrpou", "taxId", "tax_id", "code"]);
+  const name = oneCRowText(row, ["name", "fullName", "full_name"]);
+  const phone = oneCRowText(row, "phone");
+  const email = oneCRowText(row, "email");
+  return byId(state.clients, id)
+    || state.clients.find((client) => taxId && linkedRequisiteIncludes(client, "client", "edrpous", taxId))
+    || state.clients.find((client) => phone && linkedRequisiteIncludes(client, "client", "phones", phone))
+    || state.clients.find((client) => email && linkedRequisiteIncludes(client, "client", "emails", email))
+    || state.clients.find((client) => name && client.name.toLowerCase() === name.toLowerCase());
+}
+
+function upsertOneCClient(row) {
+  const counterpartyCode = oneCRowText(row, ["counterpartyCode", "counterparty_code", "code"], "");
+  const externalId = oneCRowText(row, ["externalId", "external_id", "id"], "");
+  const oneCRef = oneCRowText(row, ["oneCRef", "one_c_ref", "ref"], "");
+  const sourceFile = oneCRowText(row, ["sourceFile", "source_file"], "");
+  const importedAt = oneCRowText(row, ["importedAt", "imported_at"], currentTimestamp());
+  let client = findClientForOneC(row);
+  if (!client) {
+    client = {
+      id: oneCRowText(row, ["crmId", "clientCrmId", "clientId", "customerId", "counterpartyCode", "counterparty_code", "id", "externalId"], uniqueId("c")),
+      name: oneCRowText(row, ["name", "fullName", "full_name"], "Клієнт 1C"),
+      type: oneCRowText(row, ["type", "sourceModule", "source_module"], "B2C"),
+      manager: oneCRowText(row, "manager", state.currentManager),
+      paymentTerms: 0,
+      creditLimitUAH: 0,
+      cabinetEnabled: false,
+      portalLogin: "",
+      password: "",
+      edrpou: "",
+      phone: "",
+      email: "",
+      priceType: "",
+      currency: "UAH",
+      taxMode: "",
+      responsibleStorage: false,
+      address: "",
+      counterpartyCode,
+      externalId,
+      oneCRef,
+      sourceType: "sql_1c",
+      sourceName: "SQL / 1C",
+      sourceText: "SQL / 1C",
+      createdFrom: "sql_1c",
+      sourceFile,
+      importedAt,
+      createdAt: currentTimestamp(),
+      updatedAt: currentTimestamp(),
+      sources: []
+    };
+    state.clients.push(client);
+  }
+  client.name = oneCRowText(row, ["name", "fullName", "full_name"], client.name);
+  client.type = oneCRowText(row, ["type", "sourceModule", "source_module"], client.type);
+  client.manager = oneCRowText(row, "manager", client.manager || state.currentManager);
+  client.edrpou = oneCRowText(row, ["edrpou", "taxId", "tax_id", "code"], client.edrpou || "");
+  client.phone = oneCRowText(row, "phone", client.phone || "");
+  client.email = oneCRowText(row, "email", client.email || "");
+  client.address = oneCRowText(row, "address", client.address || "");
+  client.priceType = oneCRowText(row, ["priceType", "price_type"], client.priceType || "");
+  client.currency = oneCRowText(row, "currency", client.currency || "UAH");
+  client.taxMode = oneCRowText(row, ["taxMode", "tax_mode"], client.taxMode || "");
+  client.paymentTerms = oneCRowNumber(row, ["paymentTerms", "payment_terms"], client.paymentTerms || 0);
+  client.creditLimitUAH = oneCRowNumber(row, ["creditLimitUAH", "credit_limit_uah", "creditLimit"], client.creditLimitUAH || 0);
+  client.counterpartyCode = oneCRowText(row, ["counterpartyCode", "counterparty_code", "code"], client.counterpartyCode || "");
+  client.externalId = oneCRowText(row, ["externalId", "external_id", "id"], client.externalId || "");
+  client.oneCRef = oneCRowText(row, ["oneCRef", "one_c_ref", "ref"], client.oneCRef || "");
+  client.sourceFile = oneCRowText(row, ["sourceFile", "source_file"], client.sourceFile || "");
+  client.importedAt = oneCRowText(row, ["importedAt", "imported_at"], client.importedAt || importedAt || currentTimestamp());
+  client.createdFrom = client.createdFrom || "sql_1c";
+  client.sourceType = "sql_1c";
+  client.sourceName = "SQL / 1C";
+  client.updatedAt = currentTimestamp();
+  addClientSource(client, {
+    type: "sql_1c",
+    label: "SQL / 1C",
+    detail: client.counterpartyCode || client.externalId || client.oneCRef || client.sourceFile || "",
+    file: client.sourceFile || "",
+    date: String(client.importedAt || today).slice(0, 10)
+  });
+  normalizeClientRequisites(client);
+  return client;
+}
+
+function upsertOneCPayment(row) {
+  const id = oneCRowText(row, ["crmId", "paymentId", "id"], uniqueId("pay"));
+  const bankRef = oneCRowText(row, "bankRef");
+  let payment = byId(state.payments, id) || state.payments.find((item) => bankRef && item.bankRef === bankRef);
+  const isNew = !payment;
+  if (!payment) {
+    payment = { id };
+    state.payments.push(payment);
+  }
+  payment.invoiceId = oneCRowText(row, "invoiceId", payment.invoiceId || "");
+  payment.marketplaceOrderId = oneCRowText(row, "marketplaceOrderId", payment.marketplaceOrderId || "");
+  payment.externalOrderId = oneCRowText(row, "externalOrderId", payment.externalOrderId || "");
+  payment.marketplace = oneCRowText(row, "marketplace", payment.marketplace || "");
+  payment.date = oneCRowText(row, "date", payment.date || today);
+  payment.amount = oneCRowNumber(row, "amount", payment.amount || 0);
+  payment.currency = oneCRowText(row, "currency", payment.currency || "UAH");
+  payment.rate = oneCRowNumber(row, "rate", payment.rate || 1);
+  payment.method = oneCRowText(row, ["method", "source"], payment.method || "1C");
+  payment.bankRef = bankRef || payment.bankRef || "";
+  payment.comment = oneCRowText(row, "comment", payment.comment || "Імпортовано з 1C");
+  payment.status = oneCRowText(row, "status", payment.status || "paid");
+  const invoice = byId(state.invoices, payment.invoiceId);
+  if (isNew && invoice && payment.amount) {
+    invoice.paid = Math.min(Number(invoice.total || 0), Number(invoice.paid || 0) + convertMoney(payment.amount, payment.currency, invoice.currency || "UAH"));
+    invoice.status = invoiceDebt(invoice) <= 0 ? "paid" : "partial";
+  }
+  const order = byId(state.marketplaceOrders, payment.marketplaceOrderId)
+    || state.marketplaceOrders.find((item) => payment.externalOrderId && item.externalOrderId === payment.externalOrderId);
+  if (order) {
+    order.payment = {
+      ...(order.payment || {}),
+      status: payment.status === "paid" ? "paid" : (order.payment?.status || "expected"),
+      amount: payment.amount,
+      method: payment.method,
+      apiStatus: "Оплата отримана з 1C"
+    };
+    if (payment.status === "paid" && ["waiting_payment", "confirmed_by_client", "upsell"].includes(normalizeMarketplaceOrderStatus(order.status))) {
+      setMarketplaceOrderWorkflowStage(order, "paid", { nextAction: "Передати замовлення на комплектацію." });
+    }
+  }
+  return payment;
+}
+
+function upsertOneCPayable(row) {
+  const id = oneCRowText(row, ["crmId", "payableId", "id"], uniqueId("ap"));
+  let payable = byId(state.payables || [], id);
+  if (!payable) {
+    payable = { id };
+    state.payables = state.payables || [];
+    state.payables.push(payable);
+  }
+  payable.supplier = oneCRowText(row, "supplier", payable.supplier || "");
+  payable.manager = oneCRowText(row, "manager", payable.manager || state.currentManager);
+  payable.article = oneCRowText(row, "article", payable.article || "Закупівля товару");
+  payable.amount = oneCRowNumber(row, "amount", payable.amount || 0);
+  payable.currency = oneCRowText(row, "currency", payable.currency || "UAH");
+  payable.dueDate = oneCRowText(row, "dueDate", payable.dueDate || today);
+  payable.status = oneCRowText(row, "status", payable.status || "open");
+  payable.comment = oneCRowText(row, "comment", payable.comment || "Імпортовано з 1C");
+  return payable;
+}
+
+function upsertOneCWarehouse(row) {
+  const id = oneCRowText(row, ["warehouseId", "warehouseCode", "warehouse_code", "code", "id"], "sql-total");
+  const name = oneCRowText(row, ["warehouse", "warehouseName", "warehouse_name", "name", "title"], id === "sql-total" ? "SQL загальний залишок" : `Склад ${id}`);
+  let warehouse = byId(state.warehouses, id);
+  if (!warehouse) {
+    warehouse = {
+      id,
+      name,
+      kind: oneCRowText(row, ["kind", "type"], "own"),
+      clientId: ""
+    };
+    state.warehouses.push(warehouse);
+  }
+  warehouse.name = name || warehouse.name;
+  warehouse.kind = oneCRowText(row, ["kind", "type"], warehouse.kind || "own");
+  warehouse.clientId = oneCRowText(row, ["clientId", "client_id"], warehouse.clientId || "");
+  return warehouse;
+}
+
+function upsertOneCFirm(row) {
+  state.settings = state.settings || {};
+  state.settings.firms = state.settings.firms || [];
+  const id = oneCRowText(row, ["firmId", "firmCode", "firm_code", "organizationId", "organization_id", "organizationCode", "organization_code", "code", "id"], "sql-main");
+  const name = oneCRowText(row, ["firm", "firmName", "firm_name", "organization", "organizationName", "organization_name", "name", "title"], id === "sql-main" ? "SQL основна фірма" : `Фірма ${id}`);
+  let firm = byId(state.settings.firms, id);
+  if (!firm) {
+    firm = {
+      id,
+      name,
+      taxMode: oneCRowText(row, ["taxMode", "tax_mode"], ""),
+      iban: oneCRowText(row, "iban", ""),
+      bank: oneCRowText(row, "bank", "")
+    };
+    state.settings.firms.push(firm);
+  }
+  firm.name = name || firm.name;
+  firm.taxMode = oneCRowText(row, ["taxMode", "tax_mode"], firm.taxMode || "");
+  firm.iban = oneCRowText(row, "iban", firm.iban || "");
+  firm.bank = oneCRowText(row, "bank", firm.bank || "");
+  return firm;
+}
+
+function upsertOneCStock(row) {
+  const product = findProductForOneC(row);
+  if (!product) return null;
+  const warehouse = upsertOneCWarehouse(row);
+  const warehouseId = warehouse?.id || oneCRowText(row, ["warehouseId", "warehouseCode", "warehouse_code"], state.warehouses[0]?.id || "wh-main");
+  const warehouseLabel = warehouse?.name || oneCRowText(row, ["warehouse", "warehouseName", "warehouse_name"], warehouseId);
+  if (warehouseId && !byId(state.warehouses, warehouseId)) {
+    state.warehouses.push({
+      id: warehouseId,
+      name: warehouseLabel || `1C склад ${warehouseId}`,
+      kind: "own",
+      clientId: ""
+    });
+  }
+  const firmId = oneCRowText(row, ["firmId", "organizationCode", "organization_code", "firmCode", "firm_code"], state.settings.firms[0]?.id || "sql-main");
+  const clientId = oneCRowText(row, ["clientCrmId", "clientId", "customerId", "counterpartyCode", "counterparty_code"]);
+  let stock = state.stock.find((item) => (
+    item.productId === product.id
+    && item.warehouseId === warehouseId
+    && (item.firmId || "vat") === firmId
+    && (item.clientId || "") === clientId
+  ));
+  if (!stock) {
+    stock = { productId: product.id, warehouseId, firmId, clientId, qty: 0 };
+    state.stock.push(stock);
+  }
+  stock.qty = oneCRowNumber(row, ["qty", "quantity", "availableQuantity", "available_quantity", "totalQuantity", "total_quantity", "balance"], stock.qty || 0);
+  stock.available = oneCRowNumber(row, ["available", "availableQuantity", "available_quantity"], stock.available || stock.qty || 0);
+  stock.reserved = oneCRowNumber(row, ["reserved", "reservedQuantity", "reserved_quantity"], stock.reserved || 0);
+  return stock;
+}
+
+function updateOneCReceivable(row) {
+  const invoice = byId(state.invoices, oneCRowText(row, ["invoiceId", "crmId", "id"]));
+  if (!invoice) return null;
+  if (row.paid !== undefined) invoice.paid = oneCRowNumber(row, "paid", invoice.paid || 0);
+  if (row.debt !== undefined) invoice.paid = Math.max(0, Number(invoice.total || 0) - oneCRowNumber(row, "debt", invoiceDebt(invoice)));
+  invoice.status = invoiceDebt(invoice) <= 0 ? "paid" : "partial";
+  return invoice;
+}
+
+function upsertOneCReceivableMirror(row) {
+  const existing = updateOneCReceivable(row);
+  if (existing) return existing;
+  const client = upsertOneCClient(row);
+  const id = oneCRowText(row, ["invoiceId", "crmId", "id", "settlementId", "settlement_id", "counterpartyCode", "counterparty_code"], uniqueId("inv"));
+  let invoice = byId(state.invoices, id);
+  if (!invoice) {
+    invoice = {
+      id,
+      orderId: "",
+      clientId: client?.id || "",
+      manager: oneCRowText(row, "manager", state.currentManager),
+      firmId: oneCRowText(row, ["firmId", "firmCode", "firm_code", "organizationCode", "organization_code"], state.settings.firms[0]?.id || "sql-main"),
+      date: oneCRowText(row, ["date", "documentDate", "document_date"], today),
+      dueDate: oneCRowText(row, ["dueDate", "due_date"], ""),
+      total: 0,
+      paid: 0,
+      currency: oneCRowText(row, "currency", "UAH"),
+      status: "partial",
+      method: "1C / SQL",
+      comment: "CRM SQL receivable"
+    };
+    state.invoices.push(invoice);
+  }
+  const debt = oneCRowNumber(row, ["debt", "balance", "amountDebt", "amount_debt"], invoiceDebt(invoice));
+  const paid = oneCRowNumber(row, "paid", invoice.paid || 0);
+  const total = oneCRowNumber(row, ["total", "amount", "turnover", "balanceTotal", "balance_total"], debt + paid);
+  invoice.clientId = client?.id || invoice.clientId || "";
+  invoice.manager = oneCRowText(row, "manager", invoice.manager || state.currentManager);
+  invoice.firmId = oneCRowText(row, ["firmId", "firmCode", "firm_code", "organizationCode", "organization_code"], invoice.firmId || state.settings.firms[0]?.id || "sql-main");
+  invoice.date = oneCRowText(row, ["date", "documentDate", "document_date"], invoice.date || today);
+  invoice.dueDate = oneCRowText(row, ["dueDate", "due_date"], invoice.dueDate || "");
+  invoice.currency = oneCRowText(row, "currency", invoice.currency || "UAH");
+  invoice.total = total;
+  invoice.paid = paid || Math.max(0, total - debt);
+  invoice.status = invoiceDebt(invoice) <= 0 ? "paid" : "partial";
+  invoice.comment = oneCRowText(row, "comment", invoice.comment || "CRM SQL receivable");
+  return invoice;
+}
+
+function updateOneCShipment(row) {
+  const orderId = oneCRowText(row, ["crmOrderId", "marketplaceOrderId", "orderId", "crmId"]);
+  const externalOrderId = oneCRowText(row, "externalOrderId");
+  const order = byId(state.marketplaceOrders, orderId)
+    || state.marketplaceOrders.find((item) => externalOrderId && item.externalOrderId === externalOrderId);
+  const ttn = oneCRowText(row, "ttn");
+  const service = oneCRowText(row, ["deliveryService", "service"]);
+  const statusText = oneCRowText(row, ["status", "deliveryStatus"]).toLowerCase();
+  if (order) {
+    order.delivery = {
+      ...(order.delivery || {}),
+      ttn: ttn || order.delivery?.ttn || "",
+      service: service || order.delivery?.service || "",
+      apiStatus: "Відвантаження отримано з 1C"
+    };
+    if (statusText.includes("достав") || statusText.includes("delivered")) {
+      setMarketplaceOrderWorkflowStage(order, "delivered", { nextAction: "Завершити продаж і запланувати follow-up." });
+    } else if (ttn || statusText.includes("відправ") || statusText.includes("ship")) {
+      setMarketplaceOrderWorkflowStage(order, "shipped", { nextAction: "Контролювати доставку по ТТН." });
+    }
+  }
+  const invoice = byId(state.invoices, oneCRowText(row, "invoiceId"));
+  if (invoice) {
+    invoice.ttn = ttn || invoice.ttn || "";
+    invoice.delivery = service || invoice.delivery || "";
+  }
+  return order || invoice || null;
+}
+
+function oneCImportRowKey(collection, row, index) {
+  const primary = oneCRowText(row, ["crmId", "id", "externalId", "external_id", "oneCRef", "one_c_ref", "ref"]);
+  if (primary) return `${collection}:${primary}`;
+  if (collection === "products") {
+    return `products:${oneCRowText(row, ["productCrmId", "productId", "internalCode", "internal_code", "sku", "productCode", "product_code", "code", "article", "barcode", "barCode", "ean"], index)}`;
+  }
+  if (collection === "clients") {
+    return `clients:${oneCRowText(row, ["clientCrmId", "clientId", "customerId", "counterpartyCode", "counterparty_code", "edrpou", "taxId", "tax_id", "phone", "email", "name"], index)}`;
+  }
+  if (collection === "warehouses") {
+    return `warehouses:${oneCRowText(row, ["warehouseId", "warehouseCode", "warehouse_code", "code", "name"], index)}`;
+  }
+  if (collection === "firms") {
+    return `firms:${oneCRowText(row, ["firmId", "firmCode", "firm_code", "organizationId", "organization_id", "organizationCode", "organization_code", "code", "name"], index)}`;
+  }
+  if (collection === "payments") {
+    return `payments:${oneCRowText(row, ["paymentId", "bankRef", "invoiceId", "marketplaceOrderId", "externalOrderId"], index)}:${oneCRowText(row, "amount", "")}`;
+  }
+  if (collection === "stock") {
+    return `stock:${oneCRowText(row, ["productCrmId", "productId", "internalCode", "internal_code", "sku", "productCode", "product_code", "code", "article", "barcode"], index)}:${oneCRowText(row, ["warehouseId", "warehouseCode", "warehouse_code"], "")}:${oneCRowText(row, ["firmId", "organizationCode", "organization_code", "firmCode", "firm_code"], "")}:${oneCRowText(row, ["clientCrmId", "clientId", "customerId", "counterpartyCode", "counterparty_code"], "")}`;
+  }
+  if (collection === "shipments") {
+    return `shipments:${oneCRowText(row, ["crmOrderId", "marketplaceOrderId", "externalOrderId", "invoiceId", "ttn"], index)}`;
+  }
+  return `${collection}:${index}:${stableExternalStringify(row).slice(0, 80)}`;
+}
+
+function applyOneCImportPayload(payload, source = "oneC") {
+  const summary = {
+    products: 0,
+    clients: 0,
+    warehouses: 0,
+    firms: 0,
+    payments: 0,
+    receivables: 0,
+    payables: 0,
+    stock: 0,
+    shipments: 0,
+    skipped: 0
+  };
+  const applyRows = (collection, rows, handler) => {
+    const result = applyChangedExternalRows(source, collection, rows, (row, index) => oneCImportRowKey(collection, row, index), handler);
+    summary[collection] = (summary[collection] || 0) + result.applied;
+    summary.skipped += result.skipped;
+  };
+  applyRows("products", oneCCombinedRows(payload, ["products", "nomenclature"]), upsertOneCProduct);
+  applyRows("clients", oneCCombinedRows(payload, ["clients", "customers", "counterparties"]), upsertOneCClient);
+  applyRows("warehouses", oneCCombinedRows(payload, ["warehouses"]), upsertOneCWarehouse);
+  applyRows("firms", oneCCombinedRows(payload, ["firms", "organizations"]), upsertOneCFirm);
+  applyRows("payments", oneCImportRows(payload, "payments"), upsertOneCPayment);
+  applyRows("receivables", oneCCombinedRows(payload, ["receivables", "counterpartyBalances", "counterparty_balances"]), upsertOneCReceivableMirror);
+  applyRows("payables", oneCImportRows(payload, "payables"), upsertOneCPayable);
+  applyRows("stock", oneCCombinedRows(payload, ["stock", "stockBalances", "stock_balances"]), upsertOneCStock);
+  applyRows("shipments", oneCImportRows(payload, "shipments"), updateOneCShipment);
+  syncCatalogParametersFromProducts(state);
+  return summary;
+}
+
+function oneCImportSummaryText(summary) {
+  return Object.entries(summary)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(", ") || "даних для оновлення не знайдено";
+}
+
+function importOneCPackage(form) {
+  if (!canCreateDocument("dataExchange") || !canEditField("dataExchangeScope")) {
+    return alert("Поточна роль не має права імпортувати відповідь 1C.");
+  }
+  try {
+    const data = formData(form);
+    const payload = JSON.parse(data.oneCPayload || "{}");
+    const summary = applyOneCImportPayload(payload);
+    updateOneCConnectionStatus({
+      lastImport: currentTimestamp(),
+      lastStatus: "imported",
+      lastMessage: `OK: імпортовано відповідь 1C (${oneCImportSummaryText(summary)}).`
+    });
+    addAudit(`Імпортовано відповідь 1C: ${oneCImportSummaryText(summary)}`, "system");
+    render();
+  } catch (error) {
+    updateOneCConnectionStatus({
+      lastImport: currentTimestamp(),
+      lastStatus: "error",
+      lastMessage: `Помилка імпорту 1C: ${error.message}`
+    });
+    render();
+    alert(`Помилка імпорту 1C: ${error.message}`);
+  }
+}
+
+async function importOneCLatestFromServer({ silent = false } = {}) {
+  if (!canCreateDocument("dataExchange") || !canEditField("dataExchangeScope")) {
+    setExchangeProcess("oneC", { status: "error", percent: 100, stage: "Доступ заборонено", message: "Поточна роль не має права імпортувати відповідь 1C.", code: "ONEC_IMPORT_ACCESS_DENIED" });
+    if (!silent) alert("Поточна роль не має права імпортувати відповідь 1C.");
+    return;
+  }
+  try {
+    setExchangeProcess("oneC", { status: "running", percent: 20, stage: "Читання ToCRM", message: "Забираємо останній JSON з локального API.", code: "" });
+    const response = await fetch("/api/onec/latest?scope=products_stock", { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    const connection = dataExchangeState().oneCConnection || {};
+    if (silent && connection.lastSourceFile === data.fullName && connection.lastSourceModifiedAt === data.modifiedAt) {
+      setExchangeProcess("oneC", { status: "success", percent: 100, stage: "Без змін", message: "ToCRM файл не змінився після попереднього імпорту.", code: "" });
+      saveState();
+      return;
+    }
+    const summary = applyOneCImportPayload(data.payload || {}, "oneC");
+    updateOneCConnectionStatus({
+      lastImport: currentTimestamp(),
+      lastStatus: "imported",
+      lastSourceFile: data.fullName || data.fileName || "",
+      lastSourceModifiedAt: data.modifiedAt || "",
+      lastMessage: `OK: імпортовано з ToCRM ${data.fileName || ""} (${oneCImportSummaryText(summary)}).`
+    });
+    setExchangeProcess("oneC", { status: "success", percent: 100, stage: "OK", message: `ToCRM: ${oneCImportSummaryText(summary)}`, code: "" });
+    addAudit(`Імпортовано 1C -> CRM з папки ToCRM: ${data.fileName || "-"} (${oneCImportSummaryText(summary)})`, "system");
+    render();
+    if (!silent) alert(`Імпортовано: ${oneCImportSummaryText(summary)}`);
+  } catch (error) {
+    const code = "ONEC_IMPORT_ERROR";
+    updateOneCConnectionStatus({
+      lastImport: currentTimestamp(),
+      lastStatus: "error",
+      lastMessage: `Помилка імпорту з ToCRM: ${error.message}`
+    });
+    setExchangeProcess("oneC", { status: "error", percent: 100, stage: "Помилка ToCRM", message: `${code}: ${error.message}`, code });
+    if (!silent) {
+      render();
+      alert(`Помилка імпорту з ToCRM: ${error.message}`);
+    }
+  }
+}
+
+async function importOneCSqlLatestFromServer({ silent = false } = {}) {
+  if (!canCreateDocument("dataExchange") || !canEditField("dataExchangeScope")) {
+    setExchangeProcess("crmSql", { status: "error", percent: 100, stage: "Доступ заборонено", message: "Поточна роль не має права імпортувати дані з CRM SQL.", code: "CRM_SQL_ACCESS_DENIED" });
+    if (!silent) alert("Поточна роль не має права імпортувати дані з CRM SQL.");
+    return;
+  }
+  try {
+    const endpoint = "/api/crm-sql/latest?limit=50000&scope=full";
+    setExchangeProcess("crmSql", { status: "running", percent: 20, stage: "Запит CRM SQL", message: `Читаємо ${endpoint}.`, code: "" });
+    const response = await fetch(endpoint, { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    const payload = data.payload || data.data || {};
+    const summary = applyOneCImportPayload(payload, "crmSql");
+    const warnings = Array.isArray(data.warnings) && data.warnings.length
+      ? ` Попередження: ${data.warnings.length}${data.errorCode ? `; код ${data.errorCode}` : ""}.`
+      : "";
+    updateOneCConnectionStatus({
+      lastImport: currentTimestamp(),
+      lastStatus: "imported",
+      lastSourceFile: "CRM SQL API",
+      lastSourceModifiedAt: data.generatedAt || "",
+      lastMessage: `OK: імпортовано з CRM SQL (${oneCImportSummaryText(summary)}).${warnings}`
+    });
+    setExchangeProcess("crmSql", { status: data.partial ? "error" : "success", percent: 100, stage: data.partial ? "Завантажено частково" : "OK", message: `CRM SQL: ${oneCImportSummaryText(summary)}${warnings}`, code: data.errorCode || "" });
+    addAudit(`Імпортовано CRM SQL -> CRM: ${oneCImportSummaryText(summary)}${warnings}`, "system");
+    render();
+    if (!silent) alert(`Імпортовано з CRM SQL: ${oneCImportSummaryText(summary)}${warnings}`);
+  } catch (error) {
+    const code = "CRM_SQL_IMPORT_ERROR";
+    updateOneCConnectionStatus({
+      lastImport: currentTimestamp(),
+      lastStatus: "error",
+      lastMessage: `Помилка імпорту CRM SQL: ${error.message}`
+    });
+    setExchangeProcess("crmSql", { status: "error", percent: 100, stage: "Помилка CRM SQL", message: `${code}: ${error.message}`, code });
+    if (!silent) {
+      render();
+      alert(`Помилка імпорту CRM SQL: ${error.message}`);
+    }
+  }
+}
+
+function setOneCAutoImport(enabled) {
+  oneCAutoImportEnabled = Boolean(enabled);
+  appLocalStorage.setItem("arms-crm-onec-auto-import", oneCAutoImportEnabled ? "true" : "false");
+  syncOneCAutoImportTimer();
+  updateOneCConnectionStatus({
+    lastStatus: oneCAutoImportEnabled ? "draft" : (dataExchangeState().oneCConnection?.lastStatus || "draft"),
+    lastMessage: oneCAutoImportEnabled
+      ? "Автоімпорт ToCRM увімкнено: CRM перевіряє останній JSON кожні 60 секунд."
+      : "Автоімпорт ToCRM вимкнено."
+  });
+  render();
+}
+
+function syncOneCAutoImportTimer() {
+  if (oneCAutoImportTimer) {
+    clearInterval(oneCAutoImportTimer);
+    oneCAutoImportTimer = null;
+  }
+  if (!oneCAutoImportEnabled) return;
+  oneCAutoImportTimer = setInterval(() => {
+    if (dataExchangeState().channel === "bas") {
+      importOneCLatestFromServer({ silent: true });
+    }
+  }, 60000);
+}
+
+function handleOneCPayloadFile(input) {
+  const file = input.files?.[0];
+  const form = input.closest('[data-action="import-onec-package"]');
+  const textarea = form?.querySelector('[name="oneCPayload"]');
+  if (!file || !textarea) return;
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    textarea.value = String(reader.result || "");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  reader.addEventListener("error", () => {
+    alert(`Не вдалося прочитати файл ${file.name}.`);
+  });
+  reader.readAsText(file, "utf-8");
+}
+
+function oneCDemoPayload() {
+  const product = state.products[0] || {};
+  const client = state.clients[0] || {};
+  const order = state.marketplaceOrders[0] || {};
+  const invoice = state.invoices.find((item) => invoiceDebt(item) > 0) || state.invoices[0] || {};
+  return {
+    schema: "marketplace-crm.onec.exchange.v1",
+    generatedAt: currentTimestamp(),
+    direction: "1C_TO_CRM",
+    products: [{
+      crmId: product.id || "p-demo-1c",
+      name: product.id ? `${product.brand || ""} ${product.model || ""}`.trim() : "Demo товар 1C",
+      brand: product.brand || "Demo",
+      model: product.model || "Товар 1C",
+      internalCode: product.internalCode || "1C-DEMO-001",
+      barcode: product.barcode || "4820000000011",
+      price: product.price || 100,
+      currency: "UAH"
+    }],
+    clients: [{
+      crmId: client.id || "c-demo-1c",
+      name: client.name || "Demo клієнт 1C",
+      phone: client.phone || "+380000000000",
+      email: client.email || "demo@example.local",
+      type: client.type || "B2C"
+    }],
+    payments: invoice.id ? [{
+      id: `1c-pay-${String(Date.now()).slice(-6)}`,
+      invoiceId: invoice.id,
+      date: today,
+      amount: Math.min(invoiceDebt(invoice), 100),
+      currency: invoice.currency || "UAH",
+      method: "1C банк",
+      bankRef: `1C-DEMO-${String(Date.now()).slice(-6)}`,
+      status: "paid"
+    }] : [],
+    receivables: invoice.id ? [{
+      invoiceId: invoice.id,
+      paid: invoice.paid || 0,
+      debt: invoiceDebt(invoice)
+    }] : [],
+    stock: product.id ? [{
+      productCrmId: product.id,
+      warehouseId: "wh-main",
+      firmId: "vat",
+      qty: 12
+    }] : [],
+    shipments: order.id ? [{
+      crmOrderId: order.id,
+      externalOrderId: order.externalOrderId || order.id,
+      ttn: `TTN-1C-${String(Date.now()).slice(-5)}`,
+      deliveryService: "Нова пошта",
+      status: "shipped"
+    }] : [],
+    payables: [{
+      id: `1c-ap-${String(Date.now()).slice(-6)}`,
+      supplier: "Demo постачальник 1C",
+      article: "Закупівля товару",
+      amount: 1500,
+      currency: "UAH",
+      dueDate: today,
+      status: "open"
+    }]
+  };
+}
+
+function importOneCDemo() {
+  if (!canCreateDocument("dataExchange") || !canEditField("dataExchangeScope")) {
+    return alert("Поточна роль не має права імпортувати demo-відповідь 1C.");
+  }
+  const summary = applyOneCImportPayload(oneCDemoPayload());
+  updateOneCConnectionStatus({
+    lastImport: currentTimestamp(),
+    lastStatus: "imported",
+    lastMessage: `OK: demo-відповідь 1C застосовано (${oneCImportSummaryText(summary)}).`
+  });
+  addAudit(`Застосовано demo-відповідь 1C: ${oneCImportSummaryText(summary)}`, "system");
+  render();
+}
+
+function positionFunnelHoverMenu(card) {
+  const menu = card?.querySelector?.(".funnel-hover-menu");
+  if (!menu) return;
+  const rect = card.getBoundingClientRect();
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1280;
+  const margin = 12;
+  const spaceBelow = Math.max(0, viewportHeight - rect.bottom - margin);
+  const spaceAbove = Math.max(0, rect.top - margin);
+  const openUp = spaceBelow < 220 && spaceAbove > spaceBelow;
+  const availableHeight = Math.max(120, Math.min(320, (openUp ? spaceAbove : spaceBelow) - 4));
+  const estimatedWidth = Math.min(340, viewportWidth * 0.86);
+  card.classList.toggle("menu-up", openUp);
+  card.classList.toggle("menu-down", !openUp);
+  card.classList.toggle("menu-align-right", rect.left + estimatedWidth > viewportWidth - margin && rect.right - estimatedWidth > margin);
+  menu.style.setProperty("--funnel-menu-max-height", `${availableHeight}px`);
+}
+
+function positionFunnelHoverMenuFromEvent(event) {
+  const card = event.target.closest?.(".funnel-card");
+  if (card) positionFunnelHoverMenu(card);
+}
+
+document.addEventListener("pointerover", handleSidebarSubnavHover);
+document.addEventListener("pointermove", handleSidebarSubnavHover);
+document.addEventListener("pointerout", handleSidebarSubnavLeave);
+document.addEventListener("mouseover", handleSidebarSubnavHover);
+document.addEventListener("mouseout", handleSidebarSubnavLeave);
+document.addEventListener("pointerover", positionFunnelHoverMenuFromEvent);
+document.addEventListener("focusin", positionFunnelHoverMenuFromEvent);
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".funnel-card:hover, .funnel-card:focus-within").forEach(positionFunnelHoverMenu);
+});
+window.addEventListener("scroll", () => {
+  document.querySelectorAll(".funnel-card:hover, .funnel-card:focus-within").forEach(positionFunnelHoverMenu);
+}, true);
+
 document.addEventListener("click", (event) => {
+  const loggedTarget = event.target.closest?.("button, [data-open-product], [data-edit-marketplace-order], [data-open-funnel-order], [data-open-marketplace-question], [data-open-marketplace-thread], [data-edit-publication], [data-open-client], [data-open-client-request-batch]");
+  if (loggedTarget) {
+    logClientAction("ui_click", {
+      tag: loggedTarget.tagName?.toLowerCase() || "",
+      text: String(loggedTarget.textContent || "").trim().slice(0, 240),
+      dataset: clientLogDataset(loggedTarget.dataset || {}),
+      formAction: loggedTarget.closest?.("form[data-action]")?.dataset.action || ""
+    });
+  }
   const productRow = event.target.closest("[data-open-product]");
   if (productRow && !event.target.closest("button, a, input, select, textarea, label")) {
     openProductCard(productRow.dataset.openProduct);
+    return;
+  }
+  const marketplaceOrderRow = event.target.closest("[data-edit-marketplace-order]");
+  if (marketplaceOrderRow && !event.target.closest("button, a, input, select, textarea, label")) {
+    editMarketplaceOrderDocument(marketplaceOrderRow.dataset.editMarketplaceOrder);
+    return;
+  }
+  const funnelCard = event.target.closest("[data-open-funnel-order]");
+  if (funnelCard && !event.target.closest(".funnel-hover-menu, button, a, input, select, textarea, label")) {
+    editMarketplaceOrderDocument(funnelCard.dataset.openFunnelOrder);
+    return;
+  }
+  const marketplaceQuestionRow = event.target.closest("[data-open-marketplace-question]");
+  if (marketplaceQuestionRow && !event.target.closest("button, a, input, select, textarea, label")) {
+    openMarketplaceQuestionReply(marketplaceQuestionRow.dataset.openMarketplaceQuestion);
+    return;
+  }
+  const marketplaceThreadRow = event.target.closest("[data-open-marketplace-thread]");
+  if (marketplaceThreadRow && !event.target.closest("button, a, input, select, textarea, label")) {
+    openMarketplaceThreadReply(marketplaceThreadRow.dataset.openMarketplaceThread);
+    return;
+  }
+  const publicationRow = event.target.closest("[data-edit-publication]");
+  if (publicationRow && !event.target.closest("button, a, input, select, textarea, label")) {
+    editPublication(publicationRow.dataset.editPublication);
     return;
   }
   const clientRow = event.target.closest("[data-open-client]");
@@ -10409,9 +20204,90 @@ document.addEventListener("click", (event) => {
   const target = event.target.closest("button");
   if (!target) return;
 
+  if (target.dataset.refreshCrmLog !== undefined) {
+    refreshCrmLogPreview();
+    return;
+  }
+
+  if (target.dataset.addLinkedRequisite !== undefined) {
+    openAddLinkedRequisiteModal(target);
+    return;
+  }
+
+  if (target.dataset.openCreateProduct !== undefined) {
+    openCreateProductForm();
+    return;
+  }
+  if (target.dataset.openCreatePublication !== undefined) {
+    openCreateMarketplacePublicationForm();
+    return;
+  }
+  if (target.dataset.openCreateMarketplaceOrder !== undefined) {
+    openCreateMarketplaceOrderForm();
+    return;
+  }
+  if (target.dataset.marketplaceQuestionType) {
+    state.marketplaceCommunicationFilters = {
+      ...marketplaceCommunicationFilter(),
+      questionType: target.dataset.marketplaceQuestionType
+    };
+    render();
+    requestAnimationFrame(() => {
+      document.querySelector("[data-marketplace-question-list]")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+    return;
+  }
+
+  if (target.dataset.smartListToggle !== undefined || target.dataset.smartListClear !== undefined) {
+    const frame = target.closest("[data-smart-list-key]");
+    if (!frame) return;
+    const preferences = smartListPreferences(frame.dataset.smartListKey);
+    if (target.dataset.smartListClear !== undefined) {
+      preferences.from = "";
+      preferences.to = "";
+    } else {
+      preferences.collapsed = !preferences.collapsed;
+    }
+    applySmartListState(frame);
+    saveState();
+    return;
+  }
+
+  if (target.dataset.tableSortIndex !== undefined) {
+    const table = target.closest("table");
+    if (table) sortDomTable(table, Number(target.dataset.tableSortIndex));
+    return;
+  }
+  if (target.dataset.subviewButton !== undefined) {
+    const viewId = target.closest("#subnav-flyout")?.dataset.subnavView || state.currentView;
+    if (!canAccessView(viewId)) return alert("Поточна роль не має доступу до цього розділу.");
+    state.currentSubViews = state.currentSubViews || {};
+    state.currentView = viewId;
+    state.currentSubViews[viewId] = target.dataset.subviewButton;
+    hideSidebarSubnav();
+    render();
+    return;
+  }
+
+  if (target.dataset.demoLogin !== undefined) {
+    const form = document.querySelector('form[data-action="login"]');
+    if (form?.elements.login) form.elements.login.value = target.dataset.demoLogin || "";
+    if (form?.elements.password) form.elements.password.value = target.dataset.demoPassword || "";
+    if (form) loginUser(form);
+    return;
+  }
+
+  if (target.dataset.demoClientLogin !== undefined) {
+    const form = document.querySelector('form[data-action="client-login"]');
+    if (form?.elements.login) form.elements.login.value = target.dataset.demoClientLogin || "";
+    if (form?.elements.password) form.elements.password.value = target.dataset.demoClientPassword || "";
+    if (form) loginClient(form);
+    return;
+  }
+
   if (target.id === "sidebar-toggle") {
     sidebarCollapsed = !sidebarCollapsed;
-    localStorage.setItem("arms-crm-sidebar-collapsed", sidebarCollapsed ? "true" : "false");
+    appLocalStorage.setItem("arms-crm-sidebar-collapsed", sidebarCollapsed ? "true" : "false");
     document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed);
     syncSidebarToggleButton();
     return;
@@ -10422,7 +20298,7 @@ document.addEventListener("click", (event) => {
   }
   if (target.dataset.clientView) {
     clientPortalView = target.dataset.clientView === "catalog" ? "catalog" : "cabinet";
-    sessionStorage.setItem("arms-crm-client-view", clientPortalView);
+    appSessionStorage.setItem("arms-crm-client-view", clientPortalView);
     render();
     return;
   }
@@ -10465,7 +20341,7 @@ document.addEventListener("click", (event) => {
   }
   if (target.dataset.quickProduct) {
     saleDraft.lines = [defaultSaleLine(target.dataset.quickProduct)];
-    state.currentView = "sales";
+    state.currentView = "b2c";
     render();
   }
   if (target.dataset.addSaleLine !== undefined) {
@@ -10504,6 +20380,7 @@ document.addEventListener("click", (event) => {
     const form = target.closest('[data-action="create-marketplace-publication"]');
     if (form) updateMarketplacePublicationDraftFromForm(form);
     marketplacePublicationDraft.lines = [...marketplacePublicationDraftLines(), defaultMarketplacePublicationLine()];
+    if (refreshMarketplacePublicationModal(form)) return;
     render();
     return;
   }
@@ -10513,7 +20390,16 @@ document.addEventListener("click", (event) => {
     const index = Number(target.dataset.removeMarketplacePublicationLine);
     const lines = marketplacePublicationDraftLines().filter((_, lineIndex) => lineIndex !== index);
     marketplacePublicationDraft.lines = lines.length ? lines : [defaultMarketplacePublicationLine()];
+    if (refreshMarketplacePublicationModal(form)) return;
     render();
+    return;
+  }
+  if (target.dataset.addMarketplaceOrderLine !== undefined) {
+    addMarketplaceOrderLineToForm(target.closest("form"));
+    return;
+  }
+  if (target.dataset.removeMarketplaceOrderLine !== undefined) {
+    removeMarketplaceOrderLineFromButton(target);
     return;
   }
   if (target.dataset.generateProductBarcode !== undefined) {
@@ -10532,16 +20418,37 @@ document.addEventListener("click", (event) => {
   if (target.dataset.editPublication) editPublication(target.dataset.editPublication);
   if (target.dataset.syncPublication) syncPublication(target.dataset.syncPublication);
   if (target.dataset.editMarketplaceOrder) editMarketplaceOrderDocument(target.dataset.editMarketplaceOrder);
+  if (target.dataset.openOrderCallback) openOrderCallbackForm(target.dataset.openOrderCallback);
+  if (target.dataset.openOrderMessage) openOrderMessageForm(target.dataset.openOrderMessage);
+  if (target.dataset.replyMarketplaceQuestion) openMarketplaceQuestionReply(target.dataset.replyMarketplaceQuestion);
+  if (target.dataset.replyMarketplaceThread) openMarketplaceThreadReply(target.dataset.replyMarketplaceThread);
+  if (target.dataset.sendViberOrder) sendViberOrderMessage(target.dataset.sendViberOrder);
+  if (target.dataset.openViberChat) openViberChat(target.dataset.openViberChat);
+  if (target.dataset.startCallRecording) startCallRecording(target.dataset.startCallRecording);
+  if (target.dataset.stopCallRecording) stopCallRecording(target.dataset.stopCallRecording).catch((error) => alert(`Не вдалося зупинити запис: ${error.message}`));
+  if (target.dataset.deleteCallRecording) deleteCallRecording(target.dataset.deleteCallRecording);
+  if (target.dataset.runOrderAutomation) runMarketplaceOrderAutomationById(target.dataset.runOrderAutomation);
+  if (target.dataset.remindMarketplaceOrder) remindMarketplaceOrder(target.dataset.remindMarketplaceOrder);
   if (target.dataset.notifyMarketplaceOrder) notifyMarketplaceOrder(target.dataset.notifyMarketplaceOrder);
   if (target.dataset.createClientFromOrder) createClientFromOrder(target.dataset.createClientFromOrder);
+  if (target.dataset.marketplaceWaitClient) waitMarketplaceClientConfirmation(target.dataset.marketplaceWaitClient);
   if (target.dataset.agreeMarketplaceOrder) agreeMarketplaceOrder(target.dataset.agreeMarketplaceOrder);
+  if (target.dataset.marketplaceWaitPayment) waitMarketplacePayment(target.dataset.marketplaceWaitPayment);
+  if (target.dataset.openMarketplacePayment) openMarketplaceOrderPaymentForm(target.dataset.openMarketplacePayment);
   if (target.dataset.marketplaceToWarehouse) sendMarketplaceOrderToWarehouse(target.dataset.marketplaceToWarehouse);
   if (target.dataset.invoiceMarketplaceOrder) createInvoiceFromMarketplaceOrder(target.dataset.invoiceMarketplaceOrder);
+  if (target.dataset.marketplacePicked) markMarketplacePicked(target.dataset.marketplacePicked);
+  if (target.dataset.marketplaceHandoverDelivery) handoverMarketplaceOrderToDelivery(target.dataset.marketplaceHandoverDelivery);
   if (target.dataset.marketplaceToDelivery) sendMarketplaceOrderToDelivery(target.dataset.marketplaceToDelivery);
+  if (target.dataset.marketplaceUpsell) markMarketplaceUpsell(target.dataset.marketplaceUpsell);
+  if (target.dataset.marketplaceComplete) completeMarketplaceOrder(target.dataset.marketplaceComplete);
+  if (target.dataset.marketplaceAftersale) markMarketplaceAftersale(target.dataset.marketplaceAftersale);
+  if (target.dataset.marketplaceRepeatSale) markMarketplaceRepeatSale(target.dataset.marketplaceRepeatSale);
+  if (target.dataset.marketplaceCancel) cancelMarketplaceOrder(target.dataset.marketplaceCancel);
   if (target.dataset.trackSelectedMarketplaceDelivery !== undefined) {
     const orderId = target.closest("[data-marketplace-api-panel]")?.querySelector('[name="orderId"]')?.value;
     if (!orderId) return alert("Оберіть замовлення для API-перевірки доставки.");
-    trackMarketplaceDelivery(orderId);
+    trackMarketplaceDelivery(orderId).catch((error) => alert(`Не вдалося перевірити доставку: ${error.message}`));
     return;
   }
   if (target.dataset.trackSelectedMarketplacePayment !== undefined) {
@@ -10550,7 +20457,7 @@ document.addEventListener("click", (event) => {
     trackMarketplacePayment(orderId);
     return;
   }
-  if (target.dataset.trackMarketplaceDelivery) trackMarketplaceDelivery(target.dataset.trackMarketplaceDelivery);
+  if (target.dataset.trackMarketplaceDelivery) trackMarketplaceDelivery(target.dataset.trackMarketplaceDelivery).catch((error) => alert(`Не вдалося перевірити доставку: ${error.message}`));
   if (target.dataset.trackMarketplacePayment) trackMarketplacePayment(target.dataset.trackMarketplacePayment);
   if (target.dataset.pullMarketplacePayment) pullMarketplacePayment(target.dataset.pullMarketplacePayment);
   if (target.dataset.resetMarketplaceOrderFilter !== undefined) {
@@ -10561,6 +20468,23 @@ document.addEventListener("click", (event) => {
   if (target.dataset.resetMarketplacePublicationSearch !== undefined) {
     state.marketplacePublicationFilters = { search: "", expanded: true };
     render();
+    return;
+  }
+  if (target.dataset.resetSalesClientFilter !== undefined) {
+    state.salesClientFilters = { search: "", source: "", from: "", to: "", expanded: true };
+    render();
+    return;
+  }
+  if (target.dataset.resetProductTableSearch !== undefined) {
+    const tableKey = target.dataset.resetProductTableSearch;
+    state.productTableFilters = {
+      ...productTableFilters(),
+      [tableKey]: ""
+    };
+    const input = document.querySelector(`[data-product-table-search="${CSS.escape(tableKey)}"]`);
+    if (input) input.value = "";
+    applyProductTableSearch(tableKey);
+    saveState();
     return;
   }
   if (target.dataset.resetB2bShipmentRequestFilter !== undefined) {
@@ -10600,6 +20524,23 @@ document.addEventListener("click", (event) => {
   if (target.dataset.resetRozetkaImportedOrderFilter !== undefined) {
     state.rozetkaImportedOrderFilters = { ...clone(seedState.rozetkaImportedOrderFilters), expanded: true };
     render();
+    return;
+  }
+  if (target.dataset.rozetkaImportFastGoods !== undefined) {
+    const form = target.closest('[data-action="rozetka-import-goods"]');
+    if (form?.elements.page) form.elements.page.value = "1";
+    if (form?.elements.maxPages) form.elements.maxPages.value = "3";
+    if (form?.requestSubmit) form.requestSubmit();
+    else form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    return;
+  }
+  if (target.dataset.rozetkaImportFastOrders !== undefined) {
+    const form = target.closest('[data-action="rozetka-import-orders"]');
+    if (form?.elements.page) form.elements.page.value = "1";
+    if (form?.elements.maxPages) form.elements.maxPages.value = "1";
+    if (form?.elements.maxDetails) form.elements.maxDetails.value = "20";
+    if (form?.requestSubmit) form.requestSubmit();
+    else form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     return;
   }
   if (target.dataset.rozetkaOrderSort) {
@@ -10660,6 +20601,74 @@ document.addEventListener("click", (event) => {
   if (target.dataset.exportBasPurchases !== undefined) {
     exportBasPurchases();
   }
+  if (target.dataset.exportOnecPackage !== undefined) {
+    exportOneCPackage();
+  }
+  if (target.dataset.importOnecLatest !== undefined) {
+    importOneCLatestFromServer();
+  }
+  if (target.dataset.importOnecSql !== undefined) {
+    importOneCSqlLatestFromServer();
+  }
+  if (target.dataset.toggleOnecAutoImport !== undefined) {
+    setOneCAutoImport(!oneCAutoImportEnabled);
+  }
+  if (target.dataset.downloadOnecBridgeSpec !== undefined) {
+    downloadOneCBridgeSpec();
+  }
+  if (target.dataset.importOnecDemo !== undefined) {
+    importOneCDemo();
+  }
+  if (target.dataset.openDataExchangeCenter !== undefined) {
+    state.currentView = "settings";
+    state.currentSubViews = { ...(state.currentSubViews || {}), settings: "dataExchange" };
+    render();
+    return;
+  }
+  if (target.dataset.runUnifiedExchange !== undefined) {
+    runUnifiedExchangeRefresh().catch((error) => alert(`UNIFIED_EXCHANGE_ERROR: ${error.message}`));
+    return;
+  }
+  if (target.dataset.rozetkaExchangeAction) {
+    submitRozetkaExchangeAction(target.dataset.rozetkaExchangeAction);
+    return;
+  }
+  if (target.dataset.runRozetkaFastOrders !== undefined) {
+    syncRozetkaOrdersFast({ silent: true }).then(() => render()).catch((error) => {
+      alert(`ROZETKA_FAST_ORDERS_ERROR: ${error.message}`);
+      render();
+    });
+    return;
+  }
+  if (target.dataset.fetchNovaPoshtaDocuments !== undefined) {
+    pullNovaPoshtaDocumentsFromGateway().catch((error) => alert(`NP_DOCUMENTS_BATCH_ERROR: ${error.message}`));
+    return;
+  }
+  if (target.dataset.syncNovaPoshtaDeliveries !== undefined) {
+    syncNovaPoshtaDeliveries().catch((error) => alert(`NP_DELIVERY_BATCH_ERROR: ${error.message}`));
+    return;
+  }
+  if (target.dataset.runMarketplaceSync !== undefined) {
+    runMarketplaceAutoSync();
+    return;
+  }
+  if (target.dataset.toggleMarketplaceAutoSync !== undefined) {
+    setMarketplaceAutoSync(!marketplaceAutoSyncEnabled);
+    return;
+  }
+  if (target.dataset.fetchNovapayGateway !== undefined) {
+    pullNovaPayPaymentsFromGateway();
+    return;
+  }
+  if (target.dataset.reconcileNovapay !== undefined) {
+    reconcileExistingNovaPayTransactions();
+    return;
+  }
+  if (target.dataset.fillNovapayDemo !== undefined) {
+    const textarea = document.querySelector('[data-action="import-novapay-json"] [name="novaPayPayload"]');
+    if (textarea) textarea.value = novaPayDemoPayloadText();
+    return;
+  }
   if (target.dataset.exportOnePurchase) {
     exportBasPurchases([target.dataset.exportOnePurchase]);
   }
@@ -10710,16 +20719,28 @@ document.addEventListener("click", (event) => {
   }
   if (target.id === "export-json") exportJson();
   if (target.id === "reset-demo") {
-    if (isClientAuthenticated()) return alert("B2B кабінет не може скидати demo-дані CRM.");
-    if (confirm("Скинути локальні demo-дані?")) {
-      state = normalizeState(clone(seedState));
-      saleDraft = { clientId: "", priceType: "", lines: [defaultSaleLine("p-200")] };
-      purchaseDraft = { lines: [defaultPurchaseLine()] };
-      marketplacePublicationDraft = { lines: [defaultMarketplacePublicationLine()] };
-      b2bDraft = { shipmentProductId: "p-100", saleProductId: "p-100", saleClientId: "c-001", shipmentFirmId: "vat", saleFirmId: "vat" };
+    if (isClientAuthenticated()) return alert("Кабінет клієнта не може скидати локальну базу CRM.");
+    if (confirm("Скинути локально завантажені товари, замовлення, оплати, залишки та ТТН? Налаштування і ролі залишаться.")) {
+      const preservedSettings = clone(state.settings || {});
+      preservedSettings.externalSync = externalSyncDefaults({ lastCleanupAt: currentTimestamp() });
+      state = normalizeState({
+        dataProfile: APP_DATA_PROFILE,
+        settings: preservedSettings,
+        roles: clone(state.roles || []),
+        employees: clone(state.employees || []),
+        currentEmployeeId: state.currentEmployeeId,
+        currentManager: state.currentManager,
+        currentRole: state.currentRole,
+        marketplaceMessageTemplates: clone(state.marketplaceMessageTemplates || [])
+      });
+      saleDraft = { clientId: "", priceType: "", lines: [defaultSaleLine()] };
+      purchaseDraft = { lines: [] };
+      marketplacePublicationDraft = { lines: [] };
+      b2bDraft = { shipmentProductId: "", saleProductId: "", saleClientId: "", shipmentFirmId: "vat", saleFirmId: "vat" };
       clientPortalDraft = { productId: "", firmId: "", barcode: "", qty: 1, serialIds: [], permitNumber: "", permitDate: "" };
       paymentDraft = { source: "cash", kind: "invoice", clientId: "", invoiceId: "", firmId: "", terminalId: "", prro: "true" };
       productImagesDraft = [];
+      saveState();
       render();
     }
   }
@@ -10758,6 +20779,15 @@ document.addEventListener("toggle", (event) => {
     saveState();
     return;
   }
+  if (event.target.matches?.("[data-sales-clients-dropdown]")) {
+    state.salesClientFilters = {
+      ...salesClientFilter(),
+      expanded: event.target.open
+    };
+    updateDropdownHint(event.target);
+    saveState();
+    return;
+  }
   if (event.target.matches?.("[data-b2b-shipment-requests-dropdown]")) {
     state.b2bShipmentRequestFilters = {
       ...b2bShipmentRequestFilter(),
@@ -10778,8 +20808,58 @@ document.addEventListener("toggle", (event) => {
 }, true);
 
 document.addEventListener("change", (event) => {
+  const changedField = event.target.closest?.("input, select, textarea");
+  const changedForm = changedField?.closest?.("form[data-action]");
+  if (changedField) {
+    logClientAction("field_change", {
+      formAction: changedForm?.dataset.action || "",
+      field: clientLogFieldSnapshot(changedField)
+    });
+  }
   if (event.target.matches("[data-product-photos]")) {
     handleProductPhotos(event.target);
+  }
+  if (event.target.matches("[data-linked-requisite-picker]")) {
+    const targetName = event.target.dataset.targetName || "";
+    const actionRoot = event.target.closest(".input-action");
+    const input = actionRoot?.querySelector(`input[data-linked-requisite][name="${CSS.escape(targetName)}"]`)
+      || event.target.closest("form")?.querySelector(`input[data-linked-requisite][name="${CSS.escape(targetName)}"]`);
+    const root = linkedScopeRoot(input) || input?.closest("form") || event.target.closest("form") || document;
+    if (input && event.target.value) {
+      input.value = event.target.value;
+      persistLinkedRequisiteInput(input);
+      attachLinkedRequisiteInputs(root);
+    }
+    return;
+  }
+  if (event.target.matches("[data-linked-parent]")) {
+    syncLinkedParentSelection(event.target);
+  }
+  if (event.target.matches('[data-marketplace-order-line] [name="lineProductId"]')) {
+    syncMarketplaceOrderLineProduct(event.target);
+  }
+  if (event.target.matches("input[data-linked-requisite]")) {
+    persistLinkedRequisiteInput(event.target);
+    attachLinkedRequisiteInputs(linkedScopeRoot(event.target) || event.target.closest("form") || $("#app"));
+  }
+  if (event.target.matches("[data-onec-payload-file]")) {
+    handleOneCPayloadFile(event.target);
+    return;
+  }
+  const dataExchangeForm = event.target.closest("[data-data-exchange-form]");
+  if (dataExchangeForm && event.target.matches("[data-data-exchange-channel], [data-data-exchange-mode]")) {
+    updateDataExchangeFormVisibility(dataExchangeForm);
+    return;
+  }
+  if (event.target.matches("[data-smart-list-date]")) {
+    const frame = event.target.closest("[data-smart-list-key]");
+    if (!frame) return;
+    const preferences = smartListPreferences(frame.dataset.smartListKey);
+    preferences.from = frame.querySelector('[name="smartListFrom"]')?.value || "";
+    preferences.to = frame.querySelector('[name="smartListTo"]')?.value || "";
+    applySmartListState(frame);
+    saveState();
+    return;
   }
   const periodForm = event.target.closest("[data-period-filter]");
   if (periodForm) {
@@ -10789,6 +20869,13 @@ document.addEventListener("change", (event) => {
       from: data.from || "2026-05-01",
       to: data.to || today
     };
+    render();
+    return;
+  }
+  const managerFunnelForm = event.target.closest("[data-manager-funnel-filter]");
+  if (managerFunnelForm) {
+    const data = formData(managerFunnelForm);
+    state.marketplaceFunnelManager = data.manager || "__all";
     render();
     return;
   }
@@ -10802,6 +20889,19 @@ document.addEventListener("change", (event) => {
       to: data.to || "",
       status: data.status || "",
       marketplace: data.marketplace || "",
+      expanded: true
+    };
+    render();
+    return;
+  }
+  const salesClientFilterForm = event.target.closest("[data-sales-client-filter]");
+  if (salesClientFilterForm && !event.target.matches("[data-sales-client-search]")) {
+    const data = formData(salesClientFilterForm);
+    state.salesClientFilters = {
+      ...salesClientFilter(),
+      from: data.from || "",
+      to: data.to || "",
+      source: data.source || "",
       expanded: true
     };
     render();
@@ -10923,6 +21023,16 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "manager-select") {
     render();
   }
+  if (event.target.id === "subview-select") {
+    state.currentSubViews = state.currentSubViews || {};
+    state.currentSubViews[state.currentView] = event.target.value;
+    render();
+    return;
+  }
+  if (event.target.matches("[data-communication-channel]")) {
+    syncCommunicationReceiver(event.target.closest("[data-order-communication-form]"));
+    return;
+  }
   if (event.target.dataset.rolePermission) {
     updateRolePermission(event.target);
     return;
@@ -10952,7 +21062,7 @@ document.addEventListener("change", (event) => {
     saleDraft.lines[index] = {
       ...(saleDraft.lines[index] || defaultSaleLine()),
       productId: event.target.value,
-      barcode: product?.barcode || product?.qrCode || "",
+      barcode: productPrimaryBarcode(product),
       price: price.amount,
       currency: price.currency,
       serialIds: [],
@@ -11056,7 +21166,7 @@ document.addEventListener("change", (event) => {
     lines[index] = {
       ...(lines[index] || defaultMarketplacePublicationLine()),
       productId: event.target.value,
-      sku: product?.supplierSku || product?.internalCode || "",
+      sku: productPrimarySku(product),
       title: product ? `${product.brand} ${product.model}` : "",
       price: price.amount || product?.price || 0,
       currency: price.currency || product?.currency || "UAH"
@@ -11155,6 +21265,16 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.matches("[data-smart-list-date]")) {
+    const frame = event.target.closest("[data-smart-list-key]");
+    if (!frame) return;
+    const preferences = smartListPreferences(frame.dataset.smartListKey);
+    preferences.from = frame.querySelector('[name="smartListFrom"]')?.value || "";
+    preferences.to = frame.querySelector('[name="smartListTo"]')?.value || "";
+    applySmartListState(frame);
+    saveState();
+    return;
+  }
   if (event.target.matches("[data-b2b-responsible-storage-search]")) {
     const details = document.querySelector("[data-b2b-responsible-storage-dropdown]");
     state.b2bResponsibleStorageFilters = {
@@ -11185,6 +21305,28 @@ document.addEventListener("input", (event) => {
       expanded: details?.open || Boolean(event.target.value.trim())
     };
     applyMarketplacePublicationSearch();
+    saveState();
+    return;
+  }
+  if (event.target.matches("[data-sales-client-search]")) {
+    const details = document.querySelector("[data-sales-clients-dropdown]");
+    state.salesClientFilters = {
+      ...salesClientFilter(),
+      search: event.target.value,
+      expanded: details?.open || Boolean(event.target.value.trim())
+    };
+    if (details && event.target.value.trim()) details.open = true;
+    applySalesClientSearch();
+    saveState();
+    return;
+  }
+  if (event.target.matches("[data-product-table-search]")) {
+    const tableKey = event.target.dataset.productTableSearch;
+    state.productTableFilters = {
+      ...productTableFilters(),
+      [tableKey]: event.target.value
+    };
+    applyProductTableSearch(tableKey);
     saveState();
     return;
   }
@@ -11235,6 +21377,10 @@ document.addEventListener("submit", (event) => {
   if (!form) return;
   event.preventDefault();
   const action = form.dataset.action;
+  logClientAction("form_submit", {
+    action,
+    form: clientLogFormSnapshot(form)
+  });
   if (action === "login") {
     loginUser(form);
     return;
@@ -11242,6 +21388,9 @@ document.addEventListener("submit", (event) => {
   if (action === "client-login") {
     loginClient(form);
     return;
+  }
+  if (action !== "add-linked-requisite") {
+    persistLinkedRequisitesFromRoot(form);
   }
   if (action === "create-invoice") createInvoice(form);
   if (action === "update-invoice") updateInvoiceDocument(form);
@@ -11257,6 +21406,10 @@ document.addEventListener("submit", (event) => {
   if (action === "update-product") updateProductCard(form);
   if (action === "create-client") createClientCard(form);
   if (action === "update-client") updateClientCard(form);
+  if (action === "add-linked-requisite") {
+    addLinkedRequisiteToParent(form);
+    return;
+  }
   if (action === "create-employee") createEmployee(form);
   if (action === "create-warehouse") createWarehouse(form);
   if (action === "create-variant-dictionary-item") createVariantDictionaryItem(form);
@@ -11275,13 +21428,30 @@ document.addEventListener("submit", (event) => {
   if (action === "update-payable") updatePayableDocument(form);
   if (action === "create-marketplace-publication") createMarketplacePublication(form);
   if (action === "update-marketplace-publication") updateMarketplacePublication(form);
+  if (action === "create-marketplace-order") createMarketplaceOrder(form);
   if (action === "update-marketplace-order") updateMarketplaceOrderDocument(form);
+  if (action === "create-marketplace-order-payment") createMarketplaceOrderPayment(form);
+  if (action === "import-novapay-json") importNovaPayJson(form);
+  if (action === "order-message") sendOrderMessage(form);
+  if (action === "order-callback") startOrderCallback(form).catch((error) => alert(`Не вдалося запустити дзвінок: ${error.message}`));
+  if (action === "reply-marketplace-question") replyMarketplaceQuestion(form).catch((error) => alert(`Не вдалося відповісти через маркетплейс: ${error.message}`));
+  if (action === "reply-marketplace-thread") replyMarketplaceThread(form);
+  if (action === "update-data-exchange") updateDataExchange(form);
+  if (action === "update-novapay-settings") updateNovaPaySettings(form);
+  if (action === "update-sales-funnel") updateSalesFunnel(form);
+  if (action === "update-communicators") updateCommunicators(form);
   if (action === "rozetka-import-goods") importRozetkaGoodsToCatalog(form);
   if (action === "rozetka-import-orders") importRozetkaOrdersToCrm(form);
+  if (action === "rozetka-import-customer-questions") importRozetkaCustomerQuestionsToCrm(form);
+  if (action === "rozetka-import-marketplace-threads") importRozetkaMarketplaceThreadsToCrm(form);
   if (action === "import-marketplace-catalog") importMarketplaceCatalog(form);
   if (action === "import-bas-purchases") importBasPurchases(form);
+  if (action === "import-onec-package") importOneCPackage(form);
   if (action === "update-rates") updateRates(form);
+  if (action === "update-delivery-api-settings") updateDeliveryApiSettings(form);
   if (action === "update-closed-day") updateClosedDay(form);
 });
 
+syncOneCAutoImportTimer();
+syncMarketplaceAutoSyncTimer();
 render();

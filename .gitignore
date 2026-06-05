@@ -1,1 +1,7 @@
 .env
+.secrets/
+.cache/
+*.ndjson
+*.log
+server-start.*.log
+onec-exchange/
