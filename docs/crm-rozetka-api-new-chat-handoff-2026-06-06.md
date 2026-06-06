@@ -44,6 +44,12 @@ D:\Codex\CRM\SQL\db\migrations\005_one_c_product_folder_attributes.sql
 
 The work log is large and has known encoding/index problems in the SQL repo. Do not blindly commit or rewrite it. Use it as a local chronological record.
 
+A compact log export for the current handoff is also available in this B2C/API repo:
+
+```text
+D:\Codex\CRM\crm-rozetka-full-api\docs\WORK_LOG_EXPORT_2026-06-06_SQL_CURRENT.md
+```
+
 ## PostgreSQL Views For B2C Retail
 
 Use these views instead of querying 1C directly.

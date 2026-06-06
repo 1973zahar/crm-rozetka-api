@@ -7,6 +7,9 @@
    D:\Codex\CRM\SQL\docs\crm-sql-new-chat-handoff-2026-06-04.md
    D:\Codex\CRM\SQL\docs\crm-sql-work-log-2026-06-01.md
 
+   Стислий експорт поточного логу для цього repo:
+   D:\Codex\CRM\crm-rozetka-full-api\docs\WORK_LOG_EXPORT_2026-06-06_SQL_CURRENT.md
+
 3. SQL migrations, які вже важливі:
    D:\Codex\CRM\SQL\db\migrations\004_one_c_serial_stock_views.sql
    D:\Codex\CRM\SQL\db\migrations\005_one_c_product_folder_attributes.sql
