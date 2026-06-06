@@ -768,3 +768,40 @@ Verification:
 Tool/runtime errors recorded:
 - GIT_PUSH_REJECTED_FETCH_FIRST: first git push was rejected because remote main contained work not present locally; recovered by fetch + clean rebase.
 ```
+
+## 2026-06-06T14:44:00+03:00 - Finalize LAN listener stability after push
+
+```text
+Request:
+Continue preparing the final handoff package and keep the prototype verified after push.
+
+Analysis:
+- The repository was already pushed at commit 111e5e4, but a follow-up LAN check showed 8797 was no longer listening.
+- Start-Job reproduction on a test port passed idle-socket stress, while non-escalated Start-Process listeners disappeared after the tool command ended.
+- This indicates two separate issues:
+  1. mock-api.ps1 needed a more defensive client accept/read loop.
+  2. local LAN listener process launch must be escalated in this sandbox so it survives after the shell command exits.
+
+Successful actions:
+- Hardened mock-api.ps1 Read-Request with a final catch-all that treats unexpected socket/read exceptions as an idle/invalid request.
+- Hardened the main accept loop so AcceptTcpClient/Handle-Client failures cannot terminate the listener process.
+- Started only the local LAN mock prototype on 0.0.0.0:8797 with a temp -LogPath outside the repo and escalated process launch.
+- Did not restart 1C production.
+- Did not write back to 1C.
+- Did not add or push .env, .secrets, .cache, crm-http*.ndjson, or raw logs.
+
+Verification:
+- PowerShell parser for mock-api.ps1: OK.
+- Bundled Node syntax check app.js: OK.
+- git diff --check: OK, only CRLF normalization warnings.
+- http://127.0.0.1:8797/index.html: OK, HTTP 200, build 20260606-publication-product-search-1.
+- http://192.168.89.204:8797/index.html: OK, HTTP 200, build 20260606-publication-product-search-1.
+- Separate-command persistence check: OK, 8797 still LISTENING on PID 37536 after the start command exited.
+- LAN idle-socket stress test: OK, 6 idle sockets plus index.html request returned HTTP 200 in about 877 ms, build 20260606-publication-product-search-1.
+- Post-stress netstat: OK, 0.0.0.0:8797 still LISTENING on PID 37536.
+
+Tool/runtime errors recorded:
+- LAN_8797_FINAL_CHECK_FAILED: after the first push, a separate LAN check could not connect because the non-escalated local listener process had disappeared.
+- LAN_IDLE_SOCKET_STRESS_ECONNREFUSED_AFTER_ACCEPT_FIX: first stress attempt after the accept-loop patch hit ECONNREFUSED because the non-escalated listener had already exited.
+- SANDBOX_STARTPROCESS_CHILD_TERMINATED_AFTER_COMMAND: inferred sandbox lifecycle issue; recovered by starting the local listener with escalated process launch.
+```

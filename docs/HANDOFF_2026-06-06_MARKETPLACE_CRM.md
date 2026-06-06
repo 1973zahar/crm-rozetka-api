@@ -90,9 +90,10 @@ No real NovaPay, Nova Poshta, Rozetka, SQL, GitHub, or 1C credentials are includ
 - Build served on `192.168.89.204:8797`: `20260606-publication-product-search-1`
 - `8796` is local-only.
 - `8797` is LAN-bound on `0.0.0.0`.
-- Last verified `8797` listener PID in this session: `11736`.
+- Last verified `8797` listener PID in this session: `37536`.
 - Old address `192.168.0.165` was unreachable during this session; current LAN IP was `192.168.89.204`.
 - The stable `8797` restart used a temp raw-log path outside the repo: `%TEMP%\marketplace-crm-8797.ndjson`.
+- The final stable `8797` restart was run with escalated process-launch permission so the local listener survives after the sandboxed shell command exits.
 
 If LAN access fails in a new chat, first check the current IPv4 address and restart only the local prototype listener. Do not restart 1C production.
 Use `-LogPath` outside the repo when restarting manually, so raw HTTP logs are not created in the Git worktree.
@@ -127,6 +128,9 @@ Start-Process -FilePath powershell -ArgumentList @('-ExecutionPolicy','Bypass','
 - `CRM_HTTP_LOG_WRITE_ACCESS_DENIED`: a test job showed default raw `crm-http.ndjson` writes can be denied in this environment; the stable restart used a temp `-LogPath` outside the repo.
 - `GIT_INDEX_LOCK_PERMISSION_DENIED`: first `git add` was blocked by sandbox write permissions for `.git/index.lock`; recovered with approved `.git` write access.
 - `GIT_PUSH_REJECTED_FETCH_FIRST`: first push was rejected because `origin/main` contained two newer handoff/log commits; recovered with `git fetch origin` and clean `git rebase origin/main`.
+- `LAN_8797_FINAL_CHECK_FAILED`: after the first push, a separate LAN check showed the sandbox-started local listener had exited.
+- `LAN_IDLE_SOCKET_STRESS_ECONNREFUSED_AFTER_ACCEPT_FIX`: a non-escalated listener start disappeared before idle-socket stress could connect; recovered by starting the local listener with escalated process launch.
+- `SANDBOX_STARTPROCESS_CHILD_TERMINATED_AFTER_COMMAND`: inferred from the fact that `Start-Job` stress tests passed while non-escalated `Start-Process` listeners disappeared after the tool command completed.
 
 ## Known blockers and next engineering tasks
 

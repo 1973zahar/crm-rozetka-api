@@ -1173,6 +1173,9 @@ function Read-Request {
   catch [System.Net.Sockets.SocketException] {
     return $null
   }
+  catch {
+    return $null
+  }
   if ($Read -le 0) {
     return $null
   }
@@ -4315,20 +4318,28 @@ try {
   Write-Host "Stop with Ctrl+C."
 
   do {
-    $Client = $Listener.AcceptTcpClient()
+    $Client = $null
     try {
+      $Client = $Listener.AcceptTcpClient()
       Handle-Client -Client $Client
     }
     catch {
-      try {
-        Send-Json -Client $Client -StatusCode 500 -Value @{ ok = $false; error = $_.Exception.Message }
-      }
-      catch {
-        try { $Client.Close() } catch {}
+      if ($null -ne $Client) {
+        try {
+          Send-Json -Client $Client -StatusCode 500 -Value @{ ok = $false; error = $_.Exception.Message }
+        }
+        catch {
+          try { $Client.Close() } catch {}
+        }
+      } else {
+        Write-Host "Client accept failed: $($_.Exception.Message)"
+        Start-Sleep -Milliseconds 100
       }
     }
     finally {
-      try { $Client.Close() } catch {}
+      if ($null -ne $Client) {
+        try { $Client.Close() } catch {}
+      }
     }
   } while (-not $Once)
 }
