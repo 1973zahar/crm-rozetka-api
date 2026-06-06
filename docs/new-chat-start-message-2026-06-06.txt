@@ -1,0 +1,32 @@
+Прочитай і продовжуй з того самого місця:
+
+1. Основний handoff для цього B2C/API repo:
+   D:\Codex\CRM\crm-rozetka-full-api\docs\crm-rozetka-api-new-chat-handoff-2026-06-06.md
+
+2. SQL handoff і лог:
+   D:\Codex\CRM\SQL\docs\crm-sql-new-chat-handoff-2026-06-04.md
+   D:\Codex\CRM\SQL\docs\crm-sql-work-log-2026-06-01.md
+
+3. SQL migrations, які вже важливі:
+   D:\Codex\CRM\SQL\db\migrations\004_one_c_serial_stock_views.sql
+   D:\Codex\CRM\SQL\db\migrations\005_one_c_product_folder_attributes.sql
+
+Працюй повільно, покроково, завжди пиши в якому вікні виконувати команду:
+- Вікно 1 - убунту
+- Вікно 2 - месер
+- Вікно 3 - локальний
+
+Після кожної дії записуй команду і результат у:
+D:\Codex\CRM\SQL\docs\crm-sql-work-log-2026-06-01.md
+
+Нічого не стирай, тільки додавай і перевіряй.
+
+Поточний стан:
+- У PostgreSQL schema one_c_mirror вже створено serial-stock views.
+- У PostgreSQL вже створено folder-derived product attributes views.
+- Для товарів використовуй one_c_mirror.crm_products_enriched.
+- Для серійних номерів використовуй one_c_mirror.crm_serial_stock_current, crm_serial_stock_by_serial, crm_serial_stock_summary.
+- Для B2C роздрібного магазину головний склад: Склад №1, warehouse_code = 2.
+- Інші склади не ігноруй; показуй окремо залишок по Склад №1, по інших складах і загальний залишок.
+
+Почни з перевірки handoff-файлів і потім продовжуй інтеграцію B2C/API на основі SQL views.
