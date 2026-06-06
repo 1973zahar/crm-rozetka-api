@@ -260,7 +260,7 @@ function Convert-CrmSqlProductRows {
   $Result = @()
   foreach ($Row in (ConvertTo-ArraySafe -Value $Rows)) {
     $Id = Get-ObjectValue -Object $Row -Names @("id", "oneCRef", "one_c_ref", "externalId", "external_id", "productCode", "product_code", "sku", "barcode") -Default ""
-    $Name = Remove-CrmSqlNamePrefix (Get-ObjectValue -Object $Row -Names @("name", "title", "productName", "product_name", "description") -Default "Product")
+    $Name = Remove-CrmSqlNamePrefix (Get-ObjectValue -Object $Row -Names @("name", "title", "model", "product", "productName", "product_name", "fullName", "full_name", "entityName", "entity_name", "nomenclature", "nomenclatureName", "nomenclature_name", "itemName", "item_name", "goodsName", "goods_name", "description") -Default "Product")
     $Sku = Get-ObjectValue -Object $Row -Names @("sku", "article", "internalCode", "internal_code", "code", "productCode", "product_code") -Default $Id
     $Barcode = Get-ObjectValue -Object $Row -Names @("barcode", "barCode", "ean") -Default ""
     $Price = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("latestPrice", "latest_price", "price", "salePrice", "sale_price", "minPrice", "min_price", "maxPrice", "max_price") -Default 0)
@@ -269,8 +269,13 @@ function Convert-CrmSqlProductRows {
     $OneCRef = Get-ObjectValue -Object $Row -Names @("oneCRef", "one_c_ref", "externalId", "external_id", "productCode", "product_code") -Default $Id
     $Description = Get-ObjectValue -Object $Row -Names @("description", "comment", "notes") -Default ""
     $Category = Get-ObjectValue -Object $Row -Names @("category", "categoryName", "category_name", "group", "groupName", "group_name") -Default ""
+    $ProductGroupCode = Get-ObjectValue -Object $Row -Names @("productGroupCode", "product_group_code", "categoryId", "category_id") -Default ""
+    $ProductGroupRef = Get-ObjectValue -Object $Row -Names @("productGroupRef", "product_group_ref") -Default ""
     $Unit = Get-ObjectValue -Object $Row -Names @("unit", "unitName", "unit_name") -Default ""
     $Currency = Get-ObjectValue -Object $Row -Names @("latestPriceCurrency", "latest_price_currency", "currency") -Default "UAH"
+    $SourceFile = Get-ObjectValue -Object $Row -Names @("sourceFile", "source_file") -Default ""
+    $ImportedAt = Get-ObjectValue -Object $Row -Names @("importedAt", "imported_at") -Default ""
+    $IsDeleted = Get-ObjectValue -Object $Row -Names @("isDeleted", "is_deleted") -Default $false
 
     $Result += [pscustomobject]@{
       id = "$Id"
@@ -282,11 +287,16 @@ function Convert-CrmSqlProductRows {
       model = "$Name"
       description = "$Description"
       category = "$Category"
+      productGroupCode = "$ProductGroupCode"
+      productGroupRef = "$ProductGroupRef"
       unit = "$Unit"
       price = $Price
       currency = "$Currency"
       totalQuantity = $TotalQty
       availableQuantity = $AvailableQty
+      sourceFile = "$SourceFile"
+      importedAt = "$ImportedAt"
+      isDeleted = $IsDeleted
       source = "CRM SQL"
     }
   }
@@ -365,7 +375,11 @@ function Convert-CrmSqlStockFromProducts {
       warehouse = "SQL total stock"
       qty = $TotalQty
       availableQty = $AvailableQty
+      availableQuantity = $AvailableQty
+      available = $AvailableQty
       reservedQty = [Math]::Max(0, $TotalQty - $AvailableQty)
+      reservedQuantity = [Math]::Max(0, $TotalQty - $AvailableQty)
+      reserved = [Math]::Max(0, $TotalQty - $AvailableQty)
       firmId = "sql-main"
       source = "CRM SQL"
     }
@@ -386,6 +400,9 @@ function Convert-CrmSqlStockRows {
     $AvailableQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("availableQty", "available_qty", "availableQuantity", "available_quantity", "freeQuantity", "free_quantity") -Default $Qty)
     $ReservedQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("reservedQty", "reserved_qty", "reservedQuantity", "reserved_quantity") -Default ([Math]::Max(0, $Qty - $AvailableQty)))
     $FirmId = Get-ObjectValue -Object $Row -Names @("firmId", "firm_id", "organizationId", "organization_id") -Default "sql-main"
+    $ProductName = Get-ObjectValue -Object $Row -Names @("productName", "product_name", "product", "name", "title", "model", "fullName", "full_name", "entityName", "entity_name", "nomenclature", "nomenclatureName", "nomenclature_name", "itemName", "item_name", "goodsName", "goods_name", "description") -Default ""
+    $SourceFile = Get-ObjectValue -Object $Row -Names @("sourceFile", "source_file") -Default ""
+    $ImportedAt = Get-ObjectValue -Object $Row -Names @("importedAt", "imported_at", "snapshotAt", "snapshot_at") -Default ""
 
     if ([string]::IsNullOrWhiteSpace("$ProductId")) {
       continue
@@ -394,12 +411,19 @@ function Convert-CrmSqlStockRows {
     $Result += [pscustomobject]@{
       productId = "$ProductId"
       sku = "$Sku"
+      productName = "$ProductName"
       warehouseId = "$WarehouseId"
       warehouse = "$Warehouse"
       qty = $Qty
       availableQty = $AvailableQty
+      availableQuantity = $AvailableQty
+      available = $AvailableQty
       reservedQty = $ReservedQty
+      reservedQuantity = $ReservedQty
+      reserved = $ReservedQty
       firmId = "$FirmId"
+      sourceFile = "$SourceFile"
+      importedAt = "$ImportedAt"
       source = "CRM SQL"
     }
   }
@@ -450,21 +474,41 @@ function Convert-CrmSqlReceivableRows {
   $Result = @()
   foreach ($Row in (ConvertTo-ArraySafe -Value $Rows)) {
     $ClientId = Get-ObjectValue -Object $Row -Names @("clientId", "client_id", "customerId", "customer_id", "counterpartyId", "counterparty_id", "counterpartyCode", "counterparty_code", "id") -Default ""
-    $Debt = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("debt", "receivable", "debit", "balance", "amount") -Default 0)
+    $Amount = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("amount", "debt", "receivable", "debit", "balance") -Default 0)
+    $AmountAbs = [Math]::Abs($Amount)
+    $DefaultBalanceSign = if ($Amount -lt 0) { "negative" } else { "positive" }
+    $BalanceSign = Get-ObjectValue -Object $Row -Names @("balanceSign", "balance_sign") -Default $DefaultBalanceSign
     $Id = Get-ObjectValue -Object $Row -Names @("id", "settlementId", "settlement_id", "counterpartyCode", "counterparty_code") -Default $ClientId
     $ClientName = Get-ObjectValue -Object $Row -Names @("clientName", "client_name", "customerName", "customer_name", "counterpartyName", "counterparty_name", "name") -Default ""
     $Currency = Get-ObjectValue -Object $Row -Names @("currency") -Default "UAH"
     $Date = Get-ObjectValue -Object $Row -Names @("date", "settlementDate", "settlement_date") -Default (Get-Date).ToString("yyyy-MM-dd")
+    $FirmId = Get-ObjectValue -Object $Row -Names @("firmId", "firm_id", "organizationId", "organization_id", "organizationCode", "organization_code") -Default ""
+    $FirmName = Get-ObjectValue -Object $Row -Names @("firmName", "firm_name", "organizationName", "organization_name") -Default ""
+    $ContractId = Get-ObjectValue -Object $Row -Names @("contractId", "contract_id", "contractCode", "contract_code") -Default ""
+    $ContractName = Get-ObjectValue -Object $Row -Names @("contractName", "contract_name") -Default ""
+    $ImportedAt = Get-ObjectValue -Object $Row -Names @("importedAt", "imported_at") -Default ""
 
     $Result += [pscustomobject]@{
       id = "$Id"
       clientId = "$ClientId"
       clientName = "$ClientName"
-      debt = $Debt
-      total = $Debt
+      name = "$ClientName"
+      fullName = "$ClientName"
+      counterpartyName = "$ClientName"
+      debt = $AmountAbs
+      balance = $Amount
+      amount = $Amount
+      amountAbs = $AmountAbs
+      balanceSign = "$BalanceSign"
+      total = $AmountAbs
       paid = 0
       currency = "$Currency"
       date = "$Date"
+      firmId = "$FirmId"
+      firmName = "$FirmName"
+      contractId = "$ContractId"
+      contractName = "$ContractName"
+      importedAt = "$ImportedAt"
       source = "CRM SQL"
     }
   }
@@ -478,43 +522,44 @@ function Get-CrmSqlLatestPayload {
   $Limit = Resolve-CrmSqlLimit -Value (Get-QueryValue -QueryString $QueryString -Key "limit")
   $ApiQuery = "limit=$Limit"
 
-  $ProductRows = Try-CrmSqlApiRows -Label "one-c products" -Path "/one-c-mirror/products" -QueryString $ApiQuery -Warnings $Warnings
+  $ProductRows = @(Try-CrmSqlApiRows -Label "one-c products" -Path "/one-c-mirror/products" -QueryString $ApiQuery -Warnings $Warnings)
   $UsedProductFallback = $false
   if ($ProductRows.Count -eq 0) {
     $UsedProductFallback = $true
-    $ProductRows = Try-CrmSqlApiRows -Label "products fallback" -Path "/products" -QueryString $ApiQuery -Warnings $Warnings
+    $ProductRows = @(Try-CrmSqlApiRows -Label "products fallback" -Path "/products" -QueryString $ApiQuery -Warnings $Warnings)
   }
-  $CustomerRows = Try-CrmSqlApiRows -Label "one-c counterparties" -Path "/one-c-mirror/counterparties" -QueryString $ApiQuery -Warnings $Warnings
+  $ProductPriceRows = @(Try-CrmSqlApiRows -Label "one-c product prices" -Path "/one-c-mirror/product-prices" -QueryString $ApiQuery -Warnings $Warnings)
+  $CustomerRows = @(Try-CrmSqlApiRows -Label "one-c counterparties" -Path "/one-c-mirror/counterparties" -QueryString $ApiQuery -Warnings $Warnings)
   $UsedCustomerFallback = $false
   if ($CustomerRows.Count -eq 0) {
     $UsedCustomerFallback = $true
-    $CustomerRows = Try-CrmSqlApiRows -Label "customers fallback" -Path "/customers" -QueryString $ApiQuery -Warnings $Warnings
+    $CustomerRows = @(Try-CrmSqlApiRows -Label "customers fallback" -Path "/customers" -QueryString $ApiQuery -Warnings $Warnings)
   }
-  $WarehouseRows = Try-CrmSqlApiRows -Label "one-c warehouses" -Path "/one-c-mirror/warehouses" -QueryString $ApiQuery -Warnings $Warnings
+  $WarehouseRows = @(Try-CrmSqlApiRows -Label "one-c warehouses" -Path "/one-c-mirror/warehouses" -QueryString $ApiQuery -Warnings $Warnings)
   $UsedWarehouseFallback = $false
   if ($WarehouseRows.Count -eq 0) {
     $UsedWarehouseFallback = $true
-    $WarehouseRows = Try-CrmSqlApiRows -Label "warehouses fallback" -Path "/warehouses" -QueryString $ApiQuery -Warnings $Warnings
+    $WarehouseRows = @(Try-CrmSqlApiRows -Label "warehouses fallback" -Path "/warehouses" -QueryString $ApiQuery -Warnings $Warnings)
   }
-  $FirmRows = Try-CrmSqlApiRows -Label "one-c firms" -Path "/one-c-mirror/firms" -QueryString $ApiQuery -Warnings $Warnings
+  $FirmRows = @(Try-CrmSqlApiRows -Label "one-c firms" -Path "/one-c-mirror/firms" -QueryString $ApiQuery -Warnings $Warnings)
   $UsedFirmFallback = $false
   if ($FirmRows.Count -eq 0) {
     $UsedFirmFallback = $true
-    $FirmRows = Try-CrmSqlApiRows -Label "firms fallback" -Path "/organizations" -QueryString $ApiQuery -Warnings $Warnings
+    $FirmRows = @(Try-CrmSqlApiRows -Label "firms fallback" -Path "/organizations" -QueryString $ApiQuery -Warnings $Warnings)
   }
-  $StockRows = Try-CrmSqlApiRows -Label "one-c stock" -Path "/one-c-mirror/stock" -QueryString $ApiQuery -Warnings $Warnings
-  $ReceivableRows = Try-CrmSqlApiRows -Label "one-c receivables" -Path "/one-c-mirror/receivables" -QueryString $ApiQuery -Warnings $Warnings
+  $StockRows = @(Try-CrmSqlApiRows -Label "one-c stock" -Path "/one-c-mirror/stock" -QueryString $ApiQuery -Warnings $Warnings)
+  $ReceivableRows = @(Try-CrmSqlApiRows -Label "one-c receivables" -Path "/one-c-mirror/receivables" -QueryString $ApiQuery -Warnings $Warnings)
   if ($ReceivableRows.Count -eq 0) {
-    $ReceivableRows = Try-CrmSqlApiRows -Label "receivables fallback" -Path "/counterparty-balances" -QueryString $ApiQuery -Warnings $Warnings
+    $ReceivableRows = @(Try-CrmSqlApiRows -Label "receivables fallback" -Path "/counterparty-balances" -QueryString $ApiQuery -Warnings $Warnings)
   }
 
   if ($UsedProductFallback -or $UsedCustomerFallback -or $UsedWarehouseFallback -or $UsedFirmFallback -or $StockRows.Count -eq 0 -or $ReceivableRows.Count -eq 0) {
     Add-CrmSqlMirrorWarning -Warnings $Warnings -Code "CRM_SQL_PARTIAL_DATA" -Message "CRM SQL returned fallback or empty sections. Deploy one-c-mirror API on crm-sql to load all products, counterparties, warehouses, firms, stock and settlements."
   }
 
-  $Products = Convert-CrmSqlProductRows -Rows $ProductRows
-  $Clients = Convert-CrmSqlCustomerRows -Rows $CustomerRows
-  $Warehouses = Convert-CrmSqlWarehouseRows -Rows $WarehouseRows
+  $Products = @(Convert-CrmSqlProductRows -Rows $ProductRows)
+  $Clients = @(Convert-CrmSqlCustomerRows -Rows $CustomerRows)
+  $Warehouses = @(Convert-CrmSqlWarehouseRows -Rows $WarehouseRows)
   if ($Warehouses.Count -eq 0) {
     $Warehouses = @([pscustomobject]@{
       id = "sql-total"
@@ -523,7 +568,7 @@ function Get-CrmSqlLatestPayload {
       source = "CRM SQL"
     })
   }
-  $Firms = Convert-CrmSqlFirmRows -Rows $FirmRows
+  $Firms = @(Convert-CrmSqlFirmRows -Rows $FirmRows)
   if ($Firms.Count -eq 0) {
     $Firms = @([pscustomobject]@{
       id = "sql-main"
@@ -532,14 +577,60 @@ function Get-CrmSqlLatestPayload {
       source = "CRM SQL"
     })
   }
-  $Stock = Convert-CrmSqlStockRows -Rows $StockRows
+  $StockFromProductsFallback = $false
+  $Stock = @(Convert-CrmSqlStockRows -Rows $StockRows)
   if ($Stock.Count -eq 0) {
-    $Stock = Convert-CrmSqlStockFromProducts -Rows $ProductRows
+    $StockFromProductsFallback = $true
+    $Stock = @(Convert-CrmSqlStockFromProducts -Rows $ProductRows)
     if ($Stock.Count -eq 0) {
       Add-CrmSqlMirrorWarning -Warnings $Warnings -Code "CRM_SQL_EMPTY_STOCK" -Message "No stock rows returned from CRM SQL."
     }
   }
-  $Receivables = Convert-CrmSqlReceivableRows -Rows $ReceivableRows
+  $Receivables = @(Convert-CrmSqlReceivableRows -Rows $ReceivableRows)
+  $SectionStatus = [ordered]@{
+    products = [ordered]@{
+      ok = ($Products.Count -gt 0)
+      rawRows = $ProductRows.Count
+      convertedRows = $Products.Count
+      fallback = $UsedProductFallback
+      code = if ($UsedProductFallback) { "CRM_SQL_PRODUCTS_FALLBACK" } elseif ($Products.Count -gt 0) { "" } else { "CRM_SQL_PRODUCTS_EMPTY" }
+    }
+    clients = [ordered]@{
+      ok = ($Clients.Count -gt 0)
+      rawRows = $CustomerRows.Count
+      convertedRows = $Clients.Count
+      fallback = $UsedCustomerFallback
+      code = if ($UsedCustomerFallback) { "CRM_SQL_CLIENTS_FALLBACK" } elseif ($Clients.Count -gt 0) { "" } else { "CRM_SQL_CLIENTS_EMPTY" }
+    }
+    warehouses = [ordered]@{
+      ok = ($WarehouseRows.Count -gt 0)
+      rawRows = $WarehouseRows.Count
+      convertedRows = $Warehouses.Count
+      fallback = $UsedWarehouseFallback
+      code = if ($UsedWarehouseFallback) { "CRM_SQL_WAREHOUSES_FALLBACK" } elseif ($WarehouseRows.Count -gt 0) { "" } else { "CRM_SQL_WAREHOUSES_EMPTY" }
+    }
+    firms = [ordered]@{
+      ok = ($FirmRows.Count -gt 0)
+      rawRows = $FirmRows.Count
+      convertedRows = $Firms.Count
+      fallback = $UsedFirmFallback
+      code = if ($UsedFirmFallback) { "CRM_SQL_FIRMS_FALLBACK" } elseif ($FirmRows.Count -gt 0) { "" } else { "CRM_SQL_FIRMS_EMPTY" }
+    }
+    stock = [ordered]@{
+      ok = ($Stock.Count -gt 0)
+      rawRows = $StockRows.Count
+      convertedRows = $Stock.Count
+      fallback = $StockFromProductsFallback
+      code = if ($StockFromProductsFallback) { "CRM_SQL_STOCK_FROM_PRODUCTS_FALLBACK" } elseif ($Stock.Count -gt 0) { "" } else { "CRM_SQL_EMPTY_STOCK" }
+    }
+    balances = [ordered]@{
+      ok = ($Receivables.Count -gt 0)
+      rawRows = $ReceivableRows.Count
+      convertedRows = $Receivables.Count
+      fallback = $false
+      code = if ($Receivables.Count -gt 0) { "" } else { "CRM_SQL_BALANCES_EMPTY" }
+    }
+  }
   $WarningCodes = @($Warnings | ForEach-Object {
     $Text = "$_"
     if ($Text -match "^([A-Z0-9_]+):") { $Matches[1] } else { "CRM_SQL_WARNING" }
@@ -561,6 +652,7 @@ function Get-CrmSqlLatestPayload {
         clients = $CustomerRows.Count
         warehouses = $WarehouseRows.Count
         firms = $FirmRows.Count
+        productPrices = $ProductPriceRows.Count
         stock = $StockRows.Count
         receivables = $ReceivableRows.Count
       }
@@ -569,6 +661,7 @@ function Get-CrmSqlLatestPayload {
         clients = $Clients.Count
         warehouses = $Warehouses.Count
         firms = $Firms.Count
+        productPrices = $ProductPriceRows.Count
         stock = $Stock.Count
         receivables = $Receivables.Count
       }
@@ -577,7 +670,9 @@ function Get-CrmSqlLatestPayload {
         clients = $UsedCustomerFallback
         warehouses = $UsedWarehouseFallback
         firms = $UsedFirmFallback
+        stockFromProducts = $StockFromProductsFallback
       }
+      sectionStatus = $SectionStatus
     }
     payload = [pscustomobject]@{
       schema = "marketplace-crm.onec.exchange.v1"
@@ -591,6 +686,7 @@ function Get-CrmSqlLatestPayload {
       stockBalances = @($Stock)
       receivables = @($Receivables)
       counterpartyBalances = @($Receivables)
+      balances = @($Receivables)
       payments = @()
       payables = @()
       shipments = @()
@@ -1061,6 +1157,13 @@ function Read-Request {
 
   try {
     $Stream = $Client.GetStream()
+    $Deadline = [DateTime]::UtcNow.AddMilliseconds(300)
+    while (-not $Stream.DataAvailable -and [DateTime]::UtcNow -lt $Deadline) {
+      Start-Sleep -Milliseconds 10
+    }
+    if (-not $Stream.DataAvailable) {
+      return $null
+    }
     $Buffer = New-Object byte[] 65536
     $Read = $Stream.Read($Buffer, 0, $Buffer.Length)
   }
@@ -1110,7 +1213,15 @@ function Read-Request {
     if ($InitialBodyBytes.Length -gt 0) {
       $BodyStream.Write($InitialBodyBytes, 0, [Math]::Min($InitialBodyBytes.Length, $ContentLength))
     }
+    $BodyDeadline = [DateTime]::UtcNow.AddSeconds(3)
     while ($BodyStream.Length -lt $ContentLength) {
+      if (-not $Stream.DataAvailable -and [DateTime]::UtcNow -ge $BodyDeadline) {
+        break
+      }
+      if (-not $Stream.DataAvailable) {
+        Start-Sleep -Milliseconds 10
+        continue
+      }
       $Remaining = [Math]::Min($Buffer.Length, $ContentLength - [int]$BodyStream.Length)
       $BodyRead = $Stream.Read($Buffer, 0, $Remaining)
       if ($BodyRead -le 0) {
@@ -1843,6 +1954,114 @@ function Invoke-NovaPoshtaDocuments {
   }
 }
 
+function Invoke-NovaPoshtaDiagnostics {
+  param([string]$QueryString = "")
+
+  $Warnings = New-Object System.Collections.ArrayList
+  $Checks = New-Object System.Collections.ArrayList
+  $ApiKeyConfigured = -not [string]::IsNullOrWhiteSpace((Get-NovaPoshtaApiKey))
+  $WindowDays = Get-NovaPoshtaHistoryWindowDays -QueryString $QueryString
+  $SampleTo = (Get-Date).Date
+  $SampleFrom = $SampleTo.AddDays(-1 * ($WindowDays - 1))
+  $SampleFromText = $SampleFrom.ToString("dd.MM.yyyy")
+  $SampleToText = $SampleTo.ToString("dd.MM.yyyy")
+  $CounterpartiesCount = 0
+  $SampleDocumentsCount = 0
+
+  if (-not $ApiKeyConfigured) {
+    [void]$Warnings.Add("NP_DIAGNOSTICS_NO_KEY: NOVA_POSHTA_API_KEY is not configured in .env.")
+    return [ordered]@{
+      ok = $true
+      provider = "Nova Poshta"
+      source = "Nova Poshta server gateway"
+      generatedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+      serverGateway = $true
+      apiKeyInBrowser = $false
+      partial = $true
+      errorCode = "NP_DIAGNOSTICS_NO_KEY"
+      warnings = @($Warnings)
+      warningCodes = @("NP_DIAGNOSTICS_NO_KEY")
+      diagnostics = [ordered]@{
+        apiKeyConfigured = $false
+        apiUrl = Get-NovaPoshtaApiUrl
+        checks = @()
+        counterpartiesCount = 0
+        sampleDocumentsCount = 0
+        samplePeriod = [ordered]@{ from = $SampleFromText; to = $SampleToText }
+      }
+    }
+  }
+
+  try {
+    $CounterpartyResponse = Invoke-NovaPoshtaApi -ModelName "Counterparty" -CalledMethod "getCounterparties" -MethodProperties ([ordered]@{
+      CounterpartyProperty = "Sender"
+      Page = "1"
+    })
+    if ([bool]$CounterpartyResponse.success) {
+      $CounterpartiesCount = @($CounterpartyResponse.data).Count
+      [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_COUNTERPARTIES_OK"; ok = $true; count = $CounterpartiesCount })
+    } else {
+      $Message = if (@($CounterpartyResponse.errors).Count) { [string]@($CounterpartyResponse.errors)[0] } else { "Nova Poshta getCounterparties failed." }
+      [void]$Warnings.Add("NP_DIAGNOSTICS_COUNTERPARTIES_FAILED: $Message")
+      [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_COUNTERPARTIES_FAILED"; ok = $false; error = $Message })
+    }
+  } catch {
+    [void]$Warnings.Add("NP_DIAGNOSTICS_COUNTERPARTIES_FAILED: $($_.Exception.Message)")
+    [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_COUNTERPARTIES_FAILED"; ok = $false; error = $_.Exception.Message })
+  }
+
+  try {
+    $DocumentResponse = Invoke-NovaPoshtaApi -ModelName "InternetDocument" -CalledMethod "getDocumentList" -MethodProperties ([ordered]@{
+      DateTimeFrom = $SampleFromText
+      DateTimeTo = $SampleToText
+      Page = "1"
+      Limit = "20"
+      GetFullList = "1"
+    })
+    if ([bool]$DocumentResponse.success) {
+      $SampleDocumentsCount = @($DocumentResponse.data).Count
+      [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_OK"; ok = $true; count = $SampleDocumentsCount; from = $SampleFromText; to = $SampleToText })
+      if ($SampleDocumentsCount -eq 0) {
+        [void]$Warnings.Add("NP_DOCUMENTS_EMPTY_FROM_CABINET: getDocumentList returned 0 rows for $SampleFromText..$SampleToText. Check cabinet/counterparty ownership for TTNs.")
+      }
+    } else {
+      $Message = if (@($DocumentResponse.errors).Count) { [string]@($DocumentResponse.errors)[0] } else { "Nova Poshta getDocumentList failed." }
+      [void]$Warnings.Add("NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED: $Message")
+      [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED"; ok = $false; error = $Message; from = $SampleFromText; to = $SampleToText })
+    }
+  } catch {
+    [void]$Warnings.Add("NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED: $($_.Exception.Message)")
+    [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED"; ok = $false; error = $_.Exception.Message; from = $SampleFromText; to = $SampleToText })
+  }
+
+  $WarningCodes = @($Warnings | ForEach-Object {
+    $Text = "$_"
+    if ($Text -match "^([A-Z0-9_]+):") { $Matches[1] } else { "NP_DIAGNOSTICS_WARNING" }
+  })
+
+  return [ordered]@{
+    ok = $true
+    provider = "Nova Poshta"
+    source = "Nova Poshta server gateway"
+    generatedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    serverGateway = $true
+    apiKeyInBrowser = $false
+    partial = ($WarningCodes.Count -gt 0)
+    errorCode = if ($WarningCodes.Count -gt 0) { $WarningCodes[0] } else { "" }
+    warnings = @($Warnings)
+    warningCodes = @($WarningCodes)
+    diagnostics = [ordered]@{
+      apiKeyConfigured = $ApiKeyConfigured
+      apiUrl = Get-NovaPoshtaApiUrl
+      checks = @($Checks)
+      counterpartiesCount = $CounterpartiesCount
+      sampleDocumentsCount = $SampleDocumentsCount
+      samplePeriod = [ordered]@{ from = $SampleFromText; to = $SampleToText }
+      adviceCode = if ($SampleDocumentsCount -eq 0) { "NP_DOCUMENTS_EMPTY_FROM_CABINET" } else { "" }
+    }
+  }
+}
+
 function Invoke-NovaPoshtaTracking {
   param([string]$QueryString = "")
 
@@ -2451,7 +2670,7 @@ function Get-NovaPayRegisterTypes {
 
   $Value = Get-QueryValue -QueryString $QueryString -Key "registerTypes"
   if ([string]::IsNullOrWhiteSpace($Value)) {
-    $Value = Get-EnvOrDefault -Name "NOVAPAY_REGISTER_TYPES" -Default "1"
+    $Value = Get-EnvOrDefault -Name "NOVAPAY_REGISTER_TYPES" -Default "1,2,3,4"
   }
   $Types = New-Object System.Collections.ArrayList
   foreach ($Part in ("$Value" -split "[,; ]+")) {
@@ -3601,8 +3820,9 @@ function Send-Static {
 function Handle-Client {
   param([System.Net.Sockets.TcpClient]$Client)
 
-  $Client.ReceiveTimeout = 3000
-  $Client.SendTimeout = 3000
+  $Client.ReceiveTimeout = 1000
+  $Client.SendTimeout = 2000
+  $Client.NoDelay = $true
 
   $Request = Read-Request -Client $Client
   if ($null -eq $Request) {
@@ -3641,6 +3861,29 @@ function Handle-Client {
       payload = $Payload
     })
     Send-Json -Client $Client -Value @{ ok = $true; loggedAt = (Get-Date).ToString("o"); logPath = (Get-CrmLogPath) }
+    return
+  }
+
+  if ($Path -eq "/api/delivery/nova-poshta/diagnostics") {
+    try {
+      Send-Json -Client $Client -Value (Invoke-NovaPoshtaDiagnostics -QueryString $Request.query)
+    }
+    catch {
+      $Code = "NP_DIAGNOSTICS_FAILED"
+      if ($_.Exception.Data.Contains("Code")) {
+        $Code = [string]$_.Exception.Data["Code"]
+      }
+      $StatusCode = if ($Code -eq "NP_DIAGNOSTICS_NO_KEY") { 400 } else { 502 }
+      Send-Json -Client $Client -StatusCode $StatusCode -Value @{
+        ok = $false
+        provider = "Nova Poshta"
+        source = "Nova Poshta server gateway"
+        serverGateway = $true
+        apiKeyInBrowser = $false
+        errorCode = $Code
+        error = $_.Exception.Message
+      }
+    }
     return
   }
 
@@ -4083,6 +4326,9 @@ try {
       catch {
         try { $Client.Close() } catch {}
       }
+    }
+    finally {
+      try { $Client.Close() } catch {}
     }
   } while (-not $Once)
 }

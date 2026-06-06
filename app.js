@@ -1,11 +1,11 @@
 "use strict";
 
 const STORAGE_KEY = "marketplace-crm-v1";
-const APP_VERSION = "2026.06.05.2";
-const APP_BUILD = "20260605-full-history-np-npay-1";
-const APP_BUILD_DATE = "2026-06-05";
-const APP_BUILD_DAY = "п'ятниця";
-const APP_BUILD_TIME = "12:05";
+const APP_VERSION = "2026.06.06.2";
+const APP_BUILD = "20260606-publication-product-search-1";
+const APP_BUILD_DATE = "2026-06-06";
+const APP_BUILD_DAY = "субота";
+const APP_BUILD_TIME = "12:17";
 const CLIENT_LOG_ENDPOINT = "/api/log/client-action";
 
 function createSafeStorage(storageName) {
@@ -335,6 +335,7 @@ const NOVAPAY_ERROR_CODES = {
   noOrderByTtn: "NPAY_NO_ORDER_BY_TTN",
   amountMismatch: "NPAY_AMOUNT_MISMATCH",
   gatewayError: "NPAY_GATEWAY_ERROR",
+  diagnosticsFailed: "NPAY_DIAGNOSTICS_FAILED",
   gatewayNotConfigured: "NPAY_REAL_GATEWAY_NOT_CONFIGURED",
   directGatewayNotConfigured: "NPAY_DIRECT_GATEWAY_NOT_CONFIGURED",
   directGatewayFailed: "NPAY_DIRECT_GATEWAY_FAILED",
@@ -1237,10 +1238,10 @@ const ROLE_DOCUMENT_PERMISSIONS = [
   ["marketplaceCustomerQuestions", "Питання покупців маркетплейсу"],
   ["marketplaceServiceThreads", "Переписка з маркетплейсом"],
   ["marketplaceStatus", "Зміна статусу маркетплейсу"],
-  ["warehousePicking", "Складська відбірка замовлення"],
-  ["warehouseHandover", "Передача замовлення логісту"],
-  ["logisticsAcceptance", "Підтвердження логістом передачі"],
-  ["deliveryTracking", "Відстеження доставки / ТТН"],
+  ["warehousePicking", "Продажі · Склад: кнопка Відібрано"],
+  ["warehouseHandover", "Продажі · Склад: передача на логістику"],
+  ["logisticsAcceptance", "Продажі · Логістика: внесення ТТН / передано перевізнику"],
+  ["deliveryTracking", "Продажі · Логістика: статус перевізника / вручено"],
   ["paymentTracking", "Відстеження оплати"],
   ["novaPayApi", "NovaPay API gateway"],
   ["novaPayReconciliation", "Рознесення NovaPay по ТТН"],
@@ -1265,8 +1266,8 @@ const ROLE_FIELD_PERMISSIONS = [
   ["date", "Дата документа"],
   ["client", "Клієнт"],
   ["product", "Товар / QR"],
-  ["warehouse", "Склад"],
-  ["logistics", "Логістика"],
+  ["warehouse", "Продажі · Склад: відбірка / передача"],
+  ["logistics", "Продажі · Логістика: отримано / ТТН / перевізник"],
   ["price", "Ціна"],
   ["discount", "Знижка"],
   ["cost", "Собівартість"],
@@ -1278,7 +1279,7 @@ const ROLE_FIELD_PERMISSIONS = [
   ["accounting", "Бухоблік BAS/BAF"],
   ["marketplace", "Маркетплейс"],
   ["marketplaceStatus", "Статус маркетплейс-замовлення"],
-  ["deliveryTracking", "ТТН / статус доставки"],
+  ["deliveryTracking", "Продажі · Логістика: ТТН / вручено"],
   ["paymentTracking", "Статус оплати маркетплейсу"],
   ["novaPay", "NovaPay API / рознесення ТТН"],
   ["dataExchangeScope", "Обмін: вся інформація / вибірково"]
@@ -2052,6 +2053,117 @@ function cleanLoadedDataRows(loaded, key) {
   return rows.filter((row) => !isSeedDemoRow(key, row));
 }
 
+function marketplacePublicationIsPublished(publication) {
+  return normalizeMarketplacePublicationStatus(publication?.status) === "published";
+}
+
+function normalizeMarketplacePublicationStatus(status, fallback = "needs_sync") {
+  const text = String(status ?? "").trim().toLowerCase();
+  if (!text) return fallback;
+  if (/^\d+$/.test(text)) return Number(text) > 0 ? "published" : "needs_sync";
+  if (["published", "active", "available", "uploaded", "success", "ok", "approved", "on", "true", "1"].includes(text)) return "published";
+  if (["moderation", "moderating", "pending", "review"].includes(text)) return "moderation";
+  if (["hidden", "disabled", "inactive", "off", "false"].includes(text)) return "hidden";
+  if (["needs_sync", "sync", "draft", "new"].includes(text)) return "needs_sync";
+  if (text.includes("опублік") || text.includes("актив") || text.includes("доступ") || text.includes("в продаж")) return "published";
+  if (text.includes("модерац") || text.includes("перевір")) return "moderation";
+  if (text.includes("прих") || text.includes("неактив")) return "hidden";
+  return status || fallback;
+}
+
+function rozetkaPublishedFromValue(value) {
+  if (value === true || value === 1) return true;
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return false;
+  return ["1", "true", "yes", "active", "available", "published"].includes(text)
+    || text.includes("опублік")
+    || text.includes("актив")
+    || text.includes("доступ")
+    || text.includes("в продаж");
+}
+
+function rozetkaPublicationStatusFromSource(item = {}, fallback = "needs_sync") {
+  if (rozetkaPublishedFromValue(item.item_active)
+    || rozetkaPublishedFromValue(item.available)
+    || rozetkaPublishedFromValue(item.rz_sell_status)
+    || rozetkaPublishedFromValue(item.upload_status_title)
+    || rozetkaPublishedFromValue(item.available_title)) {
+    return "published";
+  }
+  return normalizeMarketplacePublicationStatus(item.upload_status ?? item.status ?? fallback, fallback);
+}
+
+function marketplacePublicationMatchesIdentity(first = {}, second = {}) {
+  if (String(first.marketplace || "").toLowerCase() !== String(second.marketplace || "").toLowerCase()) return false;
+  const firstExternalId = String(first.externalId || "").trim().toLowerCase();
+  const secondExternalId = String(second.externalId || "").trim().toLowerCase();
+  const firstSku = String(first.sku || "").trim().toLowerCase();
+  const secondSku = String(second.sku || "").trim().toLowerCase();
+  return Boolean((firstExternalId && firstExternalId === secondExternalId)
+    || (firstSku && firstSku === secondSku)
+    || (first.productId && first.productId === second.productId && (firstExternalId || firstSku || secondExternalId || secondSku)));
+}
+
+function normalizeMarketplacePublicationRow(publication = {}) {
+  return {
+    currency: "UAH",
+    stockQty: 0,
+    photosStatus: "unknown",
+    lastSync: "",
+    manager: "",
+    ...publication,
+    status: normalizeMarketplacePublicationStatus(publication.status)
+  };
+}
+
+function rozetkaPublicationFromProduct(product, manager = "") {
+  const rozetka = product?.rozetka || {};
+  if (!product || !rozetka || typeof rozetka !== "object" || !Object.keys(rozetka).length) return null;
+  const raw = rozetka.raw || {};
+  const sku = String(raw.price_offer_id || rozetka.price_offer_id || raw.article || rozetka.article || raw.item_id || rozetka.item_id || product.marketplaceSku || product.supplierSku || "").trim();
+  const externalId = String(raw.rz_item_id || rozetka.rz_item_id || raw.item_id || rozetka.item_id || raw.id || sku).trim();
+  if (!sku && !externalId) return null;
+  const photoCount = Array.isArray(product.photos) ? product.photos.length : 0;
+  const rawPhotos = Array.isArray(raw.photos) ? raw.photos.length : 0;
+  return normalizeMarketplacePublicationRow({
+    id: uniqueId("pub"),
+    marketplace: "Rozetka",
+    productId: product.id,
+    sku: sku || externalId,
+    externalId,
+    title: raw.name_ua || raw.name || raw.name_ru || product.model || product.supplierSku || sku || "Rozetka товар",
+    price: parseDecimal(raw.price ?? raw.price_promo ?? raw.price_old ?? product.price, product.price || 0),
+    currency: "UAH",
+    stockQty: parseDecimal(raw.stock_quantity ?? rozetka.stock_quantity ?? 0, 0),
+    status: rozetkaPublicationStatusFromSource({ ...raw, ...rozetka }, "published"),
+    photosStatus: photoCount || rawPhotos ? "ok" : "missing",
+    lastSync: rozetka.importedAt || raw.updated_at || raw.created_at || "",
+    manager,
+    rozetka
+  });
+}
+
+function normalizeMarketplacePublications(next, loaded) {
+  const rows = cleanLoadedDataRows(loaded, "marketplacePublications").map(normalizeMarketplacePublicationRow);
+  (next.products || []).forEach((product) => {
+    const derived = rozetkaPublicationFromProduct(product, next.currentManager);
+    if (!derived) return;
+    const existing = rows.find((publication) => marketplacePublicationMatchesIdentity(publication, derived));
+    if (existing) {
+      Object.assign(existing, {
+        ...derived,
+        id: existing.id,
+        manager: existing.manager || derived.manager,
+        lastSync: existing.lastSync || derived.lastSync,
+        status: marketplacePublicationIsPublished(existing) ? "published" : derived.status
+      });
+    } else {
+      rows.unshift(derived);
+    }
+  });
+  return rows;
+}
+
 function ensureRuntimeExternalSync() {
   state.settings = state.settings || {};
   state.settings.externalSync = externalSyncDefaults(state.settings.externalSync || {});
@@ -2608,6 +2720,201 @@ function renderMarketplaceOrderProductSummary(order = {}) {
   return `${escapeHtml(marketplaceOrderProductsSummary(order))}<br><span class="small muted">${details}</span>`;
 }
 
+function marketplaceOrderLooksLikeCodeOnly(value) {
+  const text = String(value || "").trim();
+  if (!text) return true;
+  const compact = text.replace(/[\s._/-]+/g, "");
+  if (!compact) return true;
+  if (/^\d+$/.test(compact)) return true;
+  if (/^[a-f0-9]{10,}$/i.test(compact)) return true;
+  if (/^(p|id|sku|code|код)\d+$/i.test(compact)) return true;
+  return false;
+}
+
+function marketplaceOrderProductDisplayName(product) {
+  if (!product) return "";
+  const brandModel = [product.brand, product.model].filter(Boolean).join(" ").trim();
+  const candidates = uniqueList([
+    brandModel,
+    product.name,
+    product.title,
+    product.productName,
+    product.product_name,
+    product.product,
+    product.fullName,
+    product.full_name,
+    product.entityName,
+    product.entity_name,
+    product.nomenclature,
+    product.nomenclatureName,
+    product.itemName,
+    product.goodsName,
+    product.model,
+    product.description
+  ]);
+  const name = candidates.find((item) => !marketplaceOrderLooksLikeCodeOnly(item));
+  if (name) return name;
+  const category = !marketplaceOrderLooksLikeCodeOnly(product.category) ? product.category : "";
+  const code = uniqueList([
+    product.internalCode,
+    product.supplierSku,
+    product.marketplaceSku,
+    product.barcode,
+    product.id
+  ]).find(Boolean);
+  return category ? `${category}${code ? ` (${code})` : ""}` : `Товар ${code || "без назви"}`;
+}
+
+function marketplaceOrderProductCodeLabel(product) {
+  if (!product) return "";
+  return uniqueList([
+    product.internalCode,
+    product.supplierSku,
+    product.marketplaceSku,
+    product.barcode,
+    product.id
+  ]).slice(0, 4).join(" / ");
+}
+
+function marketplaceOrderProductSearchLabel(product) {
+  return marketplaceOrderProductDisplayName(product);
+}
+
+function marketplaceOrderProductSearchTerms(product) {
+  if (!product) return [];
+  return uniqueList([
+    product.id,
+    productName(product.id),
+    marketplaceOrderProductSearchLabel(product),
+    product.brand,
+    product.model,
+    product.name,
+    product.title,
+    product.productName,
+    product.product_name,
+    product.product,
+    product.fullName,
+    product.full_name,
+    product.entityName,
+    product.entity_name,
+    product.nomenclature,
+    product.nomenclatureName,
+    product.itemName,
+    product.goodsName,
+    product.category,
+    product.description,
+    product.marketplaceSku,
+    product.supplierSku,
+    product.internalCode,
+    product.barcode,
+    product.qrCode,
+    ...linkedRequisiteValues(product, "product", "barcodes"),
+    ...linkedRequisiteValues(product, "product", "supplierSkus"),
+    ...linkedRequisiteValues(product, "product", "internalCodes"),
+    ...linkedRequisiteValues(product, "product", "marketplaceSkus"),
+    ...linkedRequisiteValues(product, "product", "skus")
+  ].filter(Boolean));
+}
+
+function findMarketplaceOrderProductBySearch(value) {
+  const needle = normalizedText(value);
+  if (!needle) return null;
+  return state.products.find((product) => marketplaceOrderProductSearchTerms(product).some((term) => normalizedText(term) === needle)) || null;
+}
+
+function marketplaceOrderProductMatchesQuery(product, query) {
+  const words = normalizedText(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const haystack = marketplaceOrderProductSearchTerms(product).map((term) => normalizedText(term)).join(" ");
+  return words.every((word) => haystack.includes(word));
+}
+
+function marketplaceOrderProductSuggestions(query = "", limit = 20) {
+  const products = state.products.filter((product) => marketplaceOrderProductMatchesQuery(product, query));
+  return products.slice(0, limit);
+}
+
+function marketplaceOrderProductSuggestionMarkup(product) {
+  const name = marketplaceOrderProductDisplayName(product);
+  const codes = marketplaceOrderProductCodeLabel(product);
+  const meta = uniqueList([product.category, codes]).join(" · ");
+  return `
+    <button class="product-autocomplete-option" type="button" data-marketplace-order-product-option="${escapeHtml(product.id)}">
+      <strong>${escapeHtml(name)}</strong>
+      ${meta ? `<span>${escapeHtml(meta)}</span>` : ""}
+    </button>
+  `;
+}
+
+function marketplacePublicationProductSuggestionMarkup(product) {
+  const name = marketplaceOrderProductDisplayName(product);
+  const codes = marketplaceOrderProductCodeLabel(product);
+  const meta = uniqueList([product.category, codes]).join(" · ");
+  return `
+    <button class="product-autocomplete-option" type="button" data-marketplace-publication-product-option="${escapeHtml(product.id)}">
+      <strong>${escapeHtml(name)}</strong>
+      ${meta ? `<span>${escapeHtml(meta)}</span>` : ""}
+    </button>
+  `;
+}
+
+function hideMarketplaceOrderProductSuggestions(root = document) {
+  root.querySelectorAll("[data-marketplace-order-product-suggestions]").forEach((list) => {
+    list.hidden = true;
+  });
+  root.querySelectorAll("[data-marketplace-order-product-search]").forEach((input) => {
+    input.setAttribute("aria-expanded", "false");
+  });
+}
+
+function hideMarketplacePublicationProductSuggestions(root = document) {
+  root.querySelectorAll("[data-marketplace-publication-product-suggestions]").forEach((list) => {
+    list.hidden = true;
+  });
+  root.querySelectorAll("[data-marketplace-publication-product-search]").forEach((input) => {
+    input.setAttribute("aria-expanded", "false");
+  });
+}
+
+function updateMarketplaceOrderProductSuggestions(input) {
+  const wrapper = input.closest("[data-marketplace-order-product-autocomplete]");
+  const list = wrapper?.querySelector("[data-marketplace-order-product-suggestions]");
+  if (!list) return;
+  const products = marketplaceOrderProductSuggestions(input.value, 20);
+  list.innerHTML = products.map(marketplaceOrderProductSuggestionMarkup).join("");
+  list.hidden = !products.length;
+  input.setAttribute("aria-expanded", String(products.length > 0));
+}
+
+function updateMarketplacePublicationProductSuggestions(input) {
+  const wrapper = input.closest("[data-marketplace-publication-product-autocomplete]");
+  const list = wrapper?.querySelector("[data-marketplace-publication-product-suggestions]");
+  if (!list) return;
+  const products = marketplaceOrderProductSuggestions(input.value, 20);
+  list.innerHTML = products.map(marketplacePublicationProductSuggestionMarkup).join("");
+  list.hidden = !products.length;
+  input.setAttribute("aria-expanded", String(products.length > 0));
+}
+
+function selectMarketplaceOrderProductOption(button) {
+  const row = button.closest("[data-marketplace-order-line]");
+  const product = byId(state.products, button.dataset.marketplaceOrderProductOption);
+  if (!row || !product) return;
+  applyMarketplaceOrderLineProduct(row, product, { updateSearch: true });
+  hideMarketplaceOrderProductSuggestions(row);
+}
+
+function selectMarketplacePublicationProductOption(button) {
+  const row = button.closest("[data-marketplace-publication-line]");
+  const form = button.closest('[data-action="create-marketplace-publication"]');
+  const product = byId(state.products, button.dataset.marketplacePublicationProductOption);
+  if (!row || !product) return;
+  applyMarketplacePublicationLineProduct(row, product, { updateSearch: true });
+  if (form) updateMarketplacePublicationDraftFromForm(form);
+  hideMarketplacePublicationProductSuggestions(row);
+  render();
+}
+
 function renderMarketplaceOrderLinesForm(order = {}) {
   const lines = marketplaceOrderLines(order);
   return `
@@ -2628,9 +2935,17 @@ function renderMarketplaceOrderLinesForm(order = {}) {
 }
 
 function renderMarketplaceOrderLineFormRow(line = {}, index = 0, totalLines = 1) {
+  const product = byId(state.products, line.productId || "");
+  const productSearchValue = product ? marketplaceOrderProductSearchLabel(product) : "";
   return `
     <tr data-marketplace-order-line>
-      <td><select name="lineProductId" data-linked-parent="product" data-linked-parent-scope="row">${state.products.map((product) => option(product.id, `${product.brand} ${product.model}`, product.id === line.productId)).join("")}</select></td>
+      <td>
+        <input type="hidden" name="lineProductId" data-linked-parent="product" data-linked-parent-scope="row" value="${escapeHtml(line.productId || "")}">
+        <div class="product-autocomplete" data-marketplace-order-product-autocomplete>
+          <input data-marketplace-order-product-search value="${escapeHtml(productSearchValue)}" placeholder="Почніть вводити назву, бренд, SKU або код" autocomplete="new-password" aria-autocomplete="list" aria-expanded="false" spellcheck="false">
+          <div class="product-autocomplete-list" data-marketplace-order-product-suggestions hidden></div>
+        </div>
+      </td>
       <td>
         <div class="input-action">
           <input name="lineSku" data-skip-suggestions data-linked-requisite="product" data-linked-parent-field="lineProductId" data-linked-parent-scope="row" data-requisite-field="skus" data-requisite-label="SKU товару" value="${escapeHtml(line.sku || "")}" placeholder="SKU">
@@ -2664,7 +2979,7 @@ function collectMarketplaceOrderLinesFromForm(form) {
   return lines.length ? lines : [];
 }
 
-function marketplaceOrderDefaultLine(product = state.products[0]) {
+function marketplaceOrderDefaultLine(product = null) {
   const price = product?.id ? productSalePrice(product, marketplacePriceTypeId()) : { amount: 0, currency: "UAH" };
   return {
     id: `line-${Date.now()}`,
@@ -2706,17 +3021,85 @@ function removeMarketplaceOrderLineFromButton(button) {
   updateMarketplaceOrderLineRemoveButtons(form);
 }
 
-function syncMarketplaceOrderLineProduct(select) {
-  const row = select.closest("[data-marketplace-order-line]");
-  const product = byId(state.products, select.value);
+function applyMarketplaceOrderLineProduct(row, product, { updateSearch = true } = {}) {
   if (!row || !product) return;
+  const productIdInput = row.querySelector('[name="lineProductId"]');
+  const productSearchInput = row.querySelector("[data-marketplace-order-product-search]");
   const skuInput = row.querySelector('[name="lineSku"]');
   const priceInput = row.querySelector('[name="linePrice"]');
   const currencySelect = row.querySelector('[name="lineCurrency"]');
   const price = productSalePrice(product, marketplacePriceTypeId());
-  if (skuInput && !String(skuInput.value || "").trim()) skuInput.value = productPrimarySku(product) || product.id;
+  const previousProductId = productIdInput?.value || "";
+  if (productIdInput) productIdInput.value = product.id;
+  if (productSearchInput && updateSearch) productSearchInput.value = marketplaceOrderProductSearchLabel(product);
+  if (skuInput && (!String(skuInput.value || "").trim() || previousProductId !== product.id)) skuInput.value = productPrimarySku(product) || product.id;
   if (priceInput) priceInput.value = price.amount || product.price || 0;
   if (currencySelect) currencySelect.value = price.currency || product.currency || "UAH";
+  attachLinkedRequisiteInputs(row);
+}
+
+function syncMarketplaceOrderLineProduct(select) {
+  const row = select.closest("[data-marketplace-order-line]");
+  const product = byId(state.products, select.value);
+  applyMarketplaceOrderLineProduct(row, product);
+}
+
+function syncMarketplaceOrderLineProductSearch(input) {
+  const row = input.closest("[data-marketplace-order-line]");
+  if (!row) return;
+  const productIdInput = row.querySelector('[name="lineProductId"]');
+  const product = findMarketplaceOrderProductBySearch(input.value);
+  if (!product) {
+    if (productIdInput) productIdInput.value = "";
+    attachLinkedRequisiteInputs(row);
+    return;
+  }
+  applyMarketplaceOrderLineProduct(row, product, { updateSearch: true });
+}
+
+function applyMarketplacePublicationLineProduct(row, product, { updateSearch = true } = {}) {
+  if (!row || !product) return;
+  const defaults = defaultMarketplacePublicationLine(product.id);
+  const productIdInput = row.querySelector('[name="productId"]');
+  const productSearchInput = row.querySelector("[data-marketplace-publication-product-search]");
+  const skuInput = row.querySelector('[name="sku"]');
+  const titleInput = row.querySelector('[name="title"]');
+  const categoryInput = row.querySelector('[name="categoryName"]');
+  const groupInput = row.querySelector('[name="groupParam"]');
+  const filter1Name = row.querySelector('[name="filter1Name"]');
+  const filter1Value = row.querySelector('[name="filter1Value"]');
+  const filter2Name = row.querySelector('[name="filter2Name"]');
+  const filter2Value = row.querySelector('[name="filter2Value"]');
+  const filter3Name = row.querySelector('[name="filter3Name"]');
+  const filter3Value = row.querySelector('[name="filter3Value"]');
+  const priceInput = row.querySelector('[name="price"]');
+  const currencySelect = row.querySelector('[name="currency"]');
+  const codes = row.querySelector("[data-marketplace-publication-product-codes]");
+  const previousProductId = productIdInput?.value || "";
+  const productChanged = previousProductId !== product.id;
+  if (productIdInput) productIdInput.value = product.id;
+  if (productSearchInput && updateSearch) productSearchInput.value = marketplaceOrderProductSearchLabel(product);
+  if (skuInput && (!String(skuInput.value || "").trim() || productChanged)) skuInput.value = defaults.sku || productPrimarySku(product) || product.id;
+  if (titleInput && (!String(titleInput.value || "").trim() || productChanged)) titleInput.value = defaults.title || marketplaceOrderProductDisplayName(product);
+  if (categoryInput && (!String(categoryInput.value || "").trim() || productChanged)) categoryInput.value = defaults.categoryName || product.category || "";
+  if (groupInput && (!String(groupInput.value || "").trim() || productChanged)) groupInput.value = defaults.groupParam || "";
+  if (filter1Name && (!String(filter1Name.value || "").trim() || productChanged)) filter1Name.value = defaults.filter1Name || "";
+  if (filter1Value && (!String(filter1Value.value || "").trim() || productChanged)) filter1Value.value = defaults.filter1Value || "";
+  if (filter2Name && (!String(filter2Name.value || "").trim() || productChanged)) filter2Name.value = defaults.filter2Name || "";
+  if (filter2Value && (!String(filter2Value.value || "").trim() || productChanged)) filter2Value.value = defaults.filter2Value || "";
+  if (filter3Name && (!String(filter3Name.value || "").trim() || productChanged)) filter3Name.value = defaults.filter3Name || "";
+  if (filter3Value && (!String(filter3Value.value || "").trim() || productChanged)) filter3Value.value = defaults.filter3Value || "";
+  if (priceInput) priceInput.value = defaults.price || product.price || 0;
+  if (currencySelect) currencySelect.value = defaults.currency || product.currency || "UAH";
+  if (codes) codes.innerHTML = productCodes(product);
+  attachLinkedRequisiteInputs(row);
+}
+
+function syncMarketplacePublicationProductSearch(input) {
+  const row = input.closest("[data-marketplace-publication-line]");
+  if (!row) return;
+  const product = findMarketplaceOrderProductBySearch(input.value);
+  if (product) applyMarketplacePublicationLineProduct(row, product, { updateSearch: true });
 }
 
 function normalizeMarketplaceOrder(order, products = []) {
@@ -3034,7 +3417,7 @@ function normalizeState(loaded = {}) {
   }));
   next.salesPlans = cleanLoadedDataRows(loaded, "salesPlans");
   next.marketplaceStats = cleanLoadedDataRows(loaded, "marketplaceStats");
-  next.marketplacePublications = cleanLoadedDataRows(loaded, "marketplacePublications");
+  next.marketplacePublications = normalizeMarketplacePublications(next, loaded);
   next.marketplaceOrders = cleanLoadedDataRows(loaded, "marketplaceOrders").map((order) => normalizeMarketplaceOrder(order, next.products));
   const demoNovaPayOrder = next.marketplaceOrders.find((order) => order.id === "mpo-001");
   if (demoNovaPayOrder && !demoNovaPayOrder.delivery?.ttn) {
@@ -3138,7 +3521,26 @@ function productName(id) {
 }
 
 function productLabel(product) {
-  return [product?.brand, product?.model].filter(Boolean).join(" ").trim() || product?.name || product?.title || product?.id || "";
+  const brandModel = [product?.brand, product?.model].filter(Boolean).join(" ").trim();
+  const candidates = uniqueList([
+    brandModel,
+    product?.name,
+    product?.title,
+    product?.productName,
+    product?.product_name,
+    product?.product,
+    product?.fullName,
+    product?.full_name,
+    product?.entityName,
+    product?.entity_name,
+    product?.nomenclature,
+    product?.nomenclatureName,
+    product?.itemName,
+    product?.goodsName,
+    product?.model,
+    product?.description
+  ]);
+  return candidates.find((item) => !marketplaceOrderLooksLikeCodeOnly(item)) || product?.id || "";
 }
 
 function clientName(id) {
@@ -4535,7 +4937,14 @@ function applySubpageVisibility(root = $("#app")) {
   if (!rules || !selected) return;
   const allPrefixes = Object.values(rules).flat();
   const selectedPrefixes = rules[selected] || [];
+  const selectedKey = `${state.currentView}:${selected}`;
+  root.querySelectorAll("[data-subview-only]").forEach((element) => {
+    const allowed = String(element.dataset.subviewOnly || "").split(/\s+/).filter(Boolean);
+    if (!allowed.length) return;
+    element.hidden = !allowed.includes(selectedKey) && !allowed.includes(selected);
+  });
   root.querySelectorAll(".panel, section[data-rozetka-inbound-panel], section[data-settings-section]").forEach((element) => {
+    if (element.dataset.subviewOnly) return;
     const title = element.querySelector("h2")?.textContent?.trim() || "";
     if (!title) return;
     const managed = allPrefixes.some((prefix) => title.startsWith(prefix) || title.includes(prefix));
@@ -5229,7 +5638,7 @@ function marketplaceOrderPendingActionLabels(order) {
     warehouse: "передати на комплектацію",
     picked: "підтвердити відбірку завскладом",
     handoverDelivery: "передати замовлення логісту",
-    logisticsAccept: "логіст підтверджує передачу в доставку",
+    logisticsAccept: "внести ТТН для перевізника",
     trackDelivery: "перевірити статус доставки за ТТН",
     ship: "створити ТТН і відправити",
     delivered: "підтвердити доставку",
@@ -5251,6 +5660,7 @@ function marketplaceOrderMissingFields(order) {
   const lines = marketplaceOrderLines(order);
   const issues = [];
   const cancelled = status === "cancelled";
+  const hasDeliveryTtn = String(delivery.ttn || "").trim();
   if (!String(order.date || "").trim()) addOrderIssue(issues, "date", "дата замовлення", "danger");
   if (!String(order.marketplace || "").trim()) addOrderIssue(issues, "marketplace", "маркетплейс", "danger");
   if (!lines.length || lines.some((line) => !line.productId || !byId(state.products, line.productId))) addOrderIssue(issues, "productId", "товари", "danger");
@@ -5267,10 +5677,11 @@ function marketplaceOrderMissingFields(order) {
     if (!String(delivery.city || "").trim()) addOrderIssue(issues, "deliveryCity", "місто доставки", "warn");
     if (!String(delivery.warehouse || buyer.address || "").trim()) addOrderIssue(issues, "deliveryAddress", "відділення або адреса доставки", "warn");
   }
-  if (statusAtLeast(status, "shipped") && !cancelled && !String(delivery.ttn || "").trim()) addOrderIssue(issues, "deliveryTtn", "ТТН", "danger");
+  if (delivery.status === "warehouse_handover" && !cancelled && !hasDeliveryTtn) addOrderIssue(issues, "deliveryTtn", "ТТН для передачі перевізнику", "danger");
+  if (statusAtLeast(status, "shipped") && !cancelled && !hasDeliveryTtn) addOrderIssue(issues, "deliveryTtn", "ТТН", "danger");
   if (statusAtLeast(status, "picked") && !cancelled && !warehouseFlow.pickingConfirmedAt) addOrderIssue(issues, "warehousePicking", "підтвердження відбірки завскладом", "danger");
   if (statusAtLeast(status, "picked") && !cancelled && ["new", "sent_to_warehouse", "picked", ""].includes(delivery.status || "")) addOrderIssue(issues, "warehouseHandover", "передача логісту", "warn");
-  if ((statusAtLeast(status, "shipped") || ["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch"].includes(delivery.status || "")) && !cancelled && !warehouseFlow.logisticsAcceptedAt) addOrderIssue(issues, "logisticsAccepted", "підтвердження логіста", "danger");
+  if ((statusAtLeast(status, "shipped") || (hasDeliveryTtn && ["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch"].includes(delivery.status || ""))) && !cancelled && !warehouseFlow.logisticsAcceptedAt) addOrderIssue(issues, "logisticsAccepted", "підтвердження логіста", "danger");
   if (statusAtLeast(status, "shipped") && !cancelled && !delivery.lastCheck) addOrderIssue(issues, "deliveryLastCheck", "перевірка статусу доставки", "warn");
   if (statusAtLeast(status, "shipped") && !cancelled && deliveryProvider.enabled && !deliveryProvider.apiKey) addOrderIssue(issues, "deliveryApiKey", `API ключ ${deliveryProvider.provider}`, "danger");
   if (!String(payment.method || "").trim()) addOrderIssue(issues, "paymentMethod", "метод оплати", "warn");
@@ -5324,17 +5735,22 @@ function orderActionClass(order, actionKey, base = "ghost") {
   return `${base}${marketplaceOrderPendingActionKeys(order).includes(actionKey) ? " action-needed" : ""}`;
 }
 
+function marketplaceOrderHasTtn(order) {
+  return Boolean(String(order?.delivery?.ttn || order?.ttn || "").trim());
+}
+
 function marketplaceOrderDeliveryActionState(order) {
   const status = normalizeMarketplaceOrderStatus(order.status);
   const deliveryStatus = order.delivery?.status || "new";
+  const hasTtn = marketplaceOrderHasTtn(order);
   const handedOver = ["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(deliveryStatus);
   const logisticsAccepted = ["logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(deliveryStatus);
   return {
     canWarehouse: ["confirmed_by_client", "upsell", "waiting_payment", "paid", "picking"].includes(status),
     canPicked: ["picking", "picked"].includes(status),
     canHandover: status === "picked" && !handedOver,
-    canLogisticsAccept: status === "picked" && deliveryStatus === "warehouse_handover",
-    canTrack: ["shipped", "delivered"].includes(status) || logisticsAccepted
+    canLogisticsAccept: status === "picked" && deliveryStatus === "warehouse_handover" && hasTtn,
+    canTrack: hasTtn && (["shipped", "delivered"].includes(status) || logisticsAccepted || deliveryStatus === "warehouse_handover")
   };
 }
 
@@ -5387,7 +5803,7 @@ function renderMarketplaceOrderProcessControl() {
   const overdueCount = rows.filter((row) => row.metrics.urgency === "overdue").length;
   const actionCount = rows.filter((row) => row.actions.length).length;
   return `
-    <section class="panel section-band">
+    <section class="panel section-band" data-subview-only="sales:orders">
       <div class="split">
         <h2>Контроль обробки замовлень</h2>
         <span class="pill ${blockerCount || overdueCount ? "danger" : actionCount ? "warn" : "good"}">${rows.length} потребують уваги</span>
@@ -5648,7 +6064,7 @@ function renderMarketplaceOrderControlActions(order) {
       <button class="${orderActionClass(order, "warehouse")}" data-marketplace-to-warehouse="${escapeHtml(order.id)}" ${canSendWarehouse && deliveryAction.canWarehouse ? "" : "disabled"}>На відбірку</button>
       <button class="${orderActionClass(order, "picked")}" data-marketplace-picked="${escapeHtml(order.id)}" ${canPicking && deliveryAction.canPicked ? "" : "disabled"}>Відбірка ОК</button>
       <button class="${orderActionClass(order, "handoverDelivery", "secondary")}" data-marketplace-handover-delivery="${escapeHtml(order.id)}" ${canWarehouseHandover && deliveryAction.canHandover ? "" : "disabled"}>Передати логісту</button>
-      <button class="${orderActionClass(order, "logisticsAccept", "secondary")}" data-marketplace-to-delivery="${escapeHtml(order.id)}" ${canLogisticsAccept && deliveryAction.canLogisticsAccept ? "" : "disabled"}>Логіст прийняв</button>
+      <button class="${orderActionClass(order, "logisticsAccept", "secondary")}" data-marketplace-to-delivery="${escapeHtml(order.id)}" ${canLogisticsAccept && deliveryAction.canLogisticsAccept ? "" : "disabled"}>Передано перевізнику</button>
       <button class="${orderActionClass(order, "trackDelivery", "secondary")}" data-track-marketplace-delivery="${escapeHtml(order.id)}" ${canDelivery && deliveryAction.canTrack ? "" : "disabled"}>Статус доставки</button>
       <button class="${orderActionClass(order, "complete")}" data-marketplace-complete="${escapeHtml(order.id)}" ${canOrder && ["delivered", "completed"].includes(order.status) ? "" : "disabled"}>Завершено</button>
       <button class="${orderActionClass(order, "followUp")}" data-marketplace-aftersale="${escapeHtml(order.id)}" ${canOrder && ["completed", "follow_up"].includes(order.status) ? "" : "disabled"}>Follow-up</button>
@@ -5698,7 +6114,7 @@ function renderManagerSalesFunnel() {
   const overdueCount = orders.filter((order) => workflowMetrics(order).urgency === "overdue").length;
   const soonCount = orders.filter((order) => workflowMetrics(order).urgency === "soon").length;
   return `
-    <section class="panel section-band manager-funnel-section">
+    <section class="panel section-band manager-funnel-section" data-subview-only="sales:orders">
       <div class="split">
         <div>
           <h2>Менеджерська воронка продажів</h2>
@@ -6440,13 +6856,15 @@ function renderMarketplaceSales() {
     ${renderWarehouseDeliveryControl()}
     ${renderRozetkaImportedOrdersPanel()}
 
-    <section class="panel section-band">
+    ${renderSalesLogisticsControl()}
+
+    <section class="panel section-band" data-subview-only="sales:legacyLogistics">
       <h2>2.3 Логістика з рухом замовлень</h2>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Замовлення</th><th>Служба</th><th>Адреса</th><th>ТТН</th><th>Склад / логістика</th><th>Рух</th><th>API доставки</th><th>Зв'язок</th><th>Дії</th></tr></thead>
           <tbody>
-            ${state.marketplaceOrders.map((order) => {
+            ${salesLogisticsOrders().map((order) => {
               const provider = deliveryProviderForOrder(order);
               return `
               <tr class="clickable-row" data-edit-marketplace-order="${escapeHtml(order.id)}" title="Клікніть, щоб змінити замовлення">
@@ -6479,8 +6897,8 @@ function renderMarketplaceSales() {
 }
 
 function marketplaceOrderCreateForm() {
-  const product = state.products[0] || {};
-  const price = product.id ? productSalePrice(product, marketplacePriceTypeId()) : { amount: 0, currency: "UAH" };
+  const product = {};
+  const price = { amount: 0, currency: "UAH" };
   return `
     <form class="form-grid" data-action="create-marketplace-order">
       <label class="field"><span>Дата замовлення</span><input name="date" type="date" value="${today}"></label>
@@ -6489,13 +6907,13 @@ function marketplaceOrderCreateForm() {
       <label class="field"><span>Статус</span><select name="status">${marketplaceOrderStatusOptions("new_order")}</select></label>
       <label class="field"><span>Менеджер</span><select name="manager">${employeeOptions(state.currentManager)}</select></label>
       <div class="full" hidden data-marketplace-order-primary-legacy>
-        <label class="field wide"><span>Товар</span><select name="productId" data-linked-parent="product">${state.products.map((item) => option(item.id, `${item.brand} ${item.model}`, item.id === product.id)).join("")}</select></label>
+        <label class="field wide"><span>Товар</span><select name="productId" data-linked-parent="product">${option("", "", true)}${state.products.map((item) => option(item.id, `${item.brand} ${item.model}`, item.id === product.id)).join("")}</select></label>
         ${linkedRequisiteInput({ parentType: "product", parentField: "productId", fieldKey: "skus", name: "sku", label: "SKU", value: productPrimarySku(product), placeholder: "SKU маркетплейсу" })}
         <label class="field"><span>Кількість</span><input name="qty" type="number" min="1" value="1"></label>
         <label class="field"><span>Ціна</span><input name="price" inputmode="decimal" value="${escapeHtml(price.amount || product.price || 0)}"></label>
         <label class="field"><span>Валюта</span><select name="currency">${Object.keys(state.settings.rates).map((currency) => option(currency, currency, currency === (price.currency || product.currency || "UAH"))).join("")}</select></label>
       </div>
-      ${renderMarketplaceOrderLinesForm({ productId: product.id, sku: productPrimarySku(product), qty: 1, price: price.amount || product.price || 0, currency: price.currency || product.currency || "UAH" })}
+      ${renderMarketplaceOrderLinesForm({ lines: [marketplaceOrderDefaultLine()], currency: "UAH" })}
       <label class="field wide"><span>Покупець CRM</span><select name="buyerClientId" data-linked-parent="client" data-linked-name-target="buyerName">${linkedParentOptions("client", "", "Новий покупець / не обрано")}</select></label>
       <label class="field"><span>Покупець</span><input name="buyerName" required placeholder="ПІБ покупця"></label>
       ${linkedRequisiteInput({ parentType: "client", parentField: "buyerClientId", fieldKey: "phones", name: "buyerPhone", label: "Телефон", required: true, placeholder: "+380... або додайте до покупця CRM" })}
@@ -6652,6 +7070,11 @@ function renderWarehouseDeliveryOrderRows(orders) {
   return orders.map((order) => {
     const buyer = marketplaceOrderBuyer(order);
     const issues = marketplaceOrderMissingFields(order);
+    const warehouseStatus = normalizeMarketplaceOrderStatus(order.status);
+    const deliveryAction = marketplaceOrderDeliveryActionState(order);
+    const canPicking = canConfirmMarketplacePicking();
+    const canWarehouseHandover = canHandoverMarketplaceOrderToLogistics();
+    const canMarkPicked = warehouseStatus === "picking";
     return `
       <article class="dashboard-row compact clickable-row ${issues.length ? "row-has-issues" : ""}" data-edit-marketplace-order="${escapeHtml(order.id)}">
         <div>
@@ -6665,18 +7088,130 @@ function renderWarehouseDeliveryOrderRows(orders) {
           <p class="small muted">${escapeHtml(order.delivery?.service || "служба не вказана")} · ${escapeHtml(order.delivery?.ttn || "ТТН не внесено")}</p>
           ${renderOrderIssueCompact(order)}
         </div>
-        ${renderMarketplaceOrderControlActions(order)}
+        <div class="row-actions no-print">
+          <button class="ghost" type="button" data-edit-marketplace-order="${escapeHtml(order.id)}">Відкрити для відбірки</button>
+          <button class="${orderActionClass(order, "picked")}" type="button" data-marketplace-picked="${escapeHtml(order.id)}" ${canPicking && deliveryAction.canPicked && canMarkPicked ? "" : "disabled"}>Відібрано</button>
+          <button class="${orderActionClass(order, "handoverDelivery", "secondary")}" type="button" data-marketplace-handover-delivery="${escapeHtml(order.id)}" ${canWarehouseHandover && deliveryAction.canHandover ? "" : "disabled"}>Передача на логістику</button>
+        </div>
       </article>
     `;
   }).join("");
 }
 
+function warehousePickingOrders(orders = state.marketplaceOrders || []) {
+  return orders.filter((order) => {
+    const status = normalizeMarketplaceOrderStatus(order.status);
+    const deliveryStatus = order.delivery?.status || "";
+    const handedOver = ["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivery_problem", "delivered"].includes(deliveryStatus);
+    return status === "picking" || (status === "picked" && !handedOver);
+  });
+}
+
+function salesLogisticsOrders(orders = state.marketplaceOrders || []) {
+  return orders.filter((order) => {
+    const status = normalizeMarketplaceOrderStatus(order.status);
+    const deliveryStatus = order.delivery?.status || "";
+    return ["shipped", "delivered"].includes(status)
+      || ["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivery_problem", "delivered"].includes(deliveryStatus);
+  });
+}
+
+function salesLogisticsStage(order) {
+  const status = normalizeMarketplaceOrderStatus(order.status);
+  const deliveryStatus = order.delivery?.status || "";
+  if (marketplaceDeliveryDeliveredByCarrier(order)) return "delivered";
+  if (deliveryStatus === "warehouse_handover" && !marketplaceOrderHasTtn(order)) return "received";
+  if (marketplaceOrderHasTtn(order) || ["logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivery_problem", "delivered"].includes(deliveryStatus)) return "carrier";
+  if (["delivered", "completed", "follow_up", "repeat_sale"].includes(status)) return "carrier";
+  return "carrier";
+}
+
+function salesLogisticsBuckets(orders = state.marketplaceOrders || []) {
+  const buckets = { received: [], carrier: [], delivered: [] };
+  salesLogisticsOrders(orders).forEach((order) => {
+    buckets[salesLogisticsStage(order)].push(order);
+  });
+  return buckets;
+}
+
+function renderSalesLogisticsOrderRows(orders, stage) {
+  if (!orders.length) return '<p class="muted small">Немає замовлень у цьому стані.</p>';
+  return orders.map((order) => {
+    const buyer = marketplaceOrderBuyer(order);
+    const provider = deliveryProviderForOrder(order);
+    const deliveryAction = marketplaceOrderDeliveryActionState(order);
+    const canTrack = canTrackMarketplaceDelivery();
+    const canComplete = canChangeMarketplaceOrderStatus();
+    const delivered = salesLogisticsStage(order) === "delivered";
+    return `
+      <article class="dashboard-row compact clickable-row" data-edit-marketplace-order="${escapeHtml(order.id)}">
+        <div>
+          <strong>${escapeHtml(order.externalOrderId || order.id)}</strong>
+          <p class="small muted">${escapeHtml(order.marketplace || "")} · ${escapeHtml(buyer.name || "покупець")} · ${formatMoney(marketplaceOrderTotal(order), order.currency)}</p>
+          ${renderWarehouseFlowSummary(order)}
+        </div>
+        <div>
+          ${marketplaceDeliveryStatusPill(order.delivery?.status || "new")}
+          <p class="small muted">${escapeHtml(order.delivery?.service || "служба не вказана")} · ${escapeHtml(order.delivery?.ttn || "ТТН не внесено")}</p>
+          ${deliveryApiProviderPill(provider)}
+        </div>
+        <div class="row-actions no-print">
+          <button class="ghost" type="button" data-edit-marketplace-order="${escapeHtml(order.id)}">Відкрити</button>
+          ${stage === "received" ? `<button class="${orderActionClass(order, "logisticsAccept", "secondary")}" type="button" data-edit-marketplace-order="${escapeHtml(order.id)}">Внести ТТН</button>` : ""}
+          ${stage === "carrier" ? `<button class="${orderActionClass(order, "trackDelivery", "secondary")}" type="button" data-track-marketplace-delivery="${escapeHtml(order.id)}" ${canTrack && deliveryAction.canTrack ? "" : "disabled"}>Оновити статус</button>` : ""}
+          ${delivered ? `<button class="${orderActionClass(order, "complete", "secondary")}" type="button" data-marketplace-complete="${escapeHtml(order.id)}" ${canComplete ? "" : "disabled"}>Завершено</button>` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderSalesLogisticsControl() {
+  const buckets = salesLogisticsBuckets();
+  return `
+    <section class="panel section-band" data-print-area="salesLogistics" data-print-title="Логістика замовлень">
+      <div class="split">
+        <div>
+          <h2>2.3 Логістика з рухом замовлень</h2>
+          <p class="muted small">Три етапи логістики: отримано від складу, передано перевізнику, вручене/доставлено.</p>
+        </div>
+        <span class="pill info">${buckets.received.length + buckets.carrier.length + buckets.delivered.length} у логістиці</span>
+      </div>
+      <div class="stack">
+        <section class="logistics-stage">
+          <div class="split"><strong>1. Отримано від складу</strong><span class="pill warn">${buckets.received.length}</span></div>
+          <div class="dashboard-list">${renderSalesLogisticsOrderRows(buckets.received, "received")}</div>
+        </section>
+        <section class="logistics-stage">
+          <div class="split"><strong>2. Передано перевізнику</strong><span class="pill info">${buckets.carrier.length}</span></div>
+          <div class="dashboard-list">${renderSalesLogisticsOrderRows(buckets.carrier, "carrier")}</div>
+        </section>
+        <section class="logistics-stage">
+          <div class="split"><strong>3. Вручене / доставлено</strong><span class="pill good">${buckets.delivered.length}</span></div>
+          <div class="dashboard-list">${renderSalesLogisticsOrderRows(buckets.delivered, "delivered")}</div>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
 function renderWarehouseDeliveryControl() {
   const orders = state.marketplaceOrders || [];
-  const picking = orders.filter((order) => normalizeMarketplaceOrderStatus(order.status) === "picking");
-  const handover = orders.filter((order) => normalizeMarketplaceOrderStatus(order.status) === "picked" && !["warehouse_handover", "logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(order.delivery?.status || ""));
-  const logistics = orders.filter((order) => normalizeMarketplaceOrderStatus(order.status) === "picked" && (order.delivery?.status || "") === "warehouse_handover");
-  const tracking = orders.filter((order) => ["shipped", "delivered"].includes(normalizeMarketplaceOrderStatus(order.status)) || ["logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivery_problem"].includes(order.delivery?.status || ""));
+  const warehouseOrders = warehousePickingOrders(orders);
+  return `
+    <section class="panel section-band" data-print-area="warehouseDelivery" data-print-title="Склад і відбірка замовлень">
+      <div class="split">
+        <div>
+          <h2>2.2 Склад і відбірка замовлень</h2>
+          <p class="muted small">Тільки замовлення на відбірку: відкрити для відбірки, відібрано, передача на логістику.</p>
+        </div>
+        <span class="pill info">${warehouseOrders.length} на відбірку</span>
+      </div>
+      <div class="dashboard-list">
+        ${renderWarehouseDeliveryOrderRows(warehouseOrders)}
+      </div>
+    </section>
+  `;
   return `
     <section class="panel section-band" data-print-area="warehouseDelivery" data-print-title="Склад і відбірка замовлень">
       <div class="split">
@@ -6684,7 +7219,7 @@ function renderWarehouseDeliveryControl() {
           <h2>2.2 Склад і відбірка замовлень</h2>
           <p class="muted small">Операційний контроль відбірки, передачі логісту, підтвердження логіста і відстеження ТТН.</p>
         </div>
-        <div class="status-legend no-print">${renderDeliveryApiSettingsSummary()}</div>
+        <span class="pill info">${warehouseOrders.length} на відбірку</span>
       </div>
       <div class="grid two">
         <article class="card stack">
@@ -7548,6 +8083,56 @@ function novaPoshtaHistorySummaryText(history) {
   return ` Історія: API ${history.fetched ?? 0}, у cache ${history.cacheCount || 0}, нові ${history.added || 0}, оновлено ${history.updated || 0}.`;
 }
 
+function crmSqlDiagnosticsSummaryText(diagnostics = {}) {
+  const raw = diagnostics.rawCounts || {};
+  const converted = diagnostics.convertedCounts || {};
+  const fallback = diagnostics.fallback || {};
+  const sectionStatus = diagnostics.sectionStatus || {};
+  const fallbackKeys = Object.entries(fallback).filter(([, value]) => value).map(([key]) => key);
+  const blockedKeys = Object.entries(sectionStatus)
+    .filter(([, value]) => value && value.ok === false)
+    .map(([key, value]) => `${key}:${value.code || "CRM_SQL_SECTION_EMPTY"}`);
+  const counts = [
+    `products ${converted.products ?? raw.products ?? 0}/${raw.products ?? 0}`,
+    `clients ${converted.clients ?? raw.clients ?? 0}/${raw.clients ?? 0}`,
+    `warehouses ${converted.warehouses ?? raw.warehouses ?? 0}/${raw.warehouses ?? 0}`,
+    `firms ${converted.firms ?? raw.firms ?? 0}/${raw.firms ?? 0}`,
+    `stock ${converted.stock ?? raw.stock ?? 0}/${raw.stock ?? 0}`,
+    `balances ${converted.receivables ?? raw.receivables ?? 0}/${raw.receivables ?? 0}`
+  ].join(", ");
+  const flags = [
+    fallbackKeys.length ? `fallback: ${fallbackKeys.join(", ")}` : "",
+    blockedKeys.length ? `codes: ${blockedKeys.join(", ")}` : ""
+  ].filter(Boolean).join("; ");
+  return ` SQL diagnostics: ${counts}${flags ? `. ${flags}` : ""}.`;
+}
+
+function crmSqlWarningCodes(warnings = []) {
+  return uniqueList((warnings || [])
+    .map((warning) => String(warning || "").match(/^([A-Z0-9_]+):/)?.[1] || "")
+    .filter(Boolean));
+}
+
+function novaPoshtaDiagnosticsSummaryText(payload = {}) {
+  const diagnostics = payload.diagnostics || {};
+  const counterparties = diagnostics.counterpartiesCount ?? 0;
+  const docs = diagnostics.sampleDocumentsCount ?? 0;
+  const period = diagnostics.samplePeriod ? ` ${diagnostics.samplePeriod.from}..${diagnostics.samplePeriod.to}` : "";
+  const keyState = diagnostics.apiKeyConfigured ? "key configured" : "key missing";
+  const codes = uniqueList([payload.errorCode, ...(payload.warningCodes || [])].filter(Boolean));
+  return `Nova Poshta diagnostics: ${keyState}, counterparties ${counterparties}, sample docs${period} ${docs}${codes.length ? `, codes ${codes.join(", ")}` : ""}.`;
+}
+
+function novaPayDiagnosticsSummaryText(payload = {}) {
+  const diagnostics = payload.diagnostics || {};
+  const directReady = diagnostics.directConfigured ? "direct ready" : "direct not configured";
+  const gatewayReady = diagnostics.gatewayUrlConfigured ? "external gateway configured" : "external gateway not configured";
+  const account = diagnostics.accountIdConfigured || diagnostics.accountIbanConfigured ? "account configured" : "account missing";
+  const client = diagnostics.clientIdConfigured ? "client configured" : "client missing";
+  const code = diagnostics.directConfigured || diagnostics.gatewayUrlConfigured ? "" : NOVAPAY_ERROR_CODES.directGatewayNotConfigured;
+  return `NovaPay diagnostics: ${directReady}, ${gatewayReady}, ${client}, ${account}${code ? `, code ${code}` : ""}.`;
+}
+
 function importNovaPayJson(form) {
   if (!canReconcileNovaPay()) return alert("Поточна роль не має права розносити платежі NovaPay.");
   const data = formData(form);
@@ -7656,6 +8241,155 @@ async function pullNovaPayPaymentsFromGateway({ silent = false } = {}) {
       saveState();
     }
     error.novaPayCode = code;
+    throw error;
+  }
+}
+
+async function checkNovaPayDiagnostics({ silent = false } = {}) {
+  if (!canManageNovaPayApi() && !canReconcileNovaPay()) {
+    const code = NOVAPAY_ERROR_CODES.diagnosticsFailed;
+    const message = "Поточна роль не має права перевіряти NovaPay gateway.";
+    setExchangeProcess("novaPay", { status: "error", percent: 100, stage: "Доступ заборонено", message: `${code}: ${message}`, code });
+    if (!silent) alert(`${code}: ${message}`);
+    return null;
+  }
+  try {
+    setExchangeProcess("novaPay", { status: "running", percent: 20, stage: "Diagnostics", message: "/api/novapay/status", code: "" });
+    const response = await fetch("/api/novapay/status", { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false) {
+      const error = new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+      error.code = payload?.errorCode || payload?.code || NOVAPAY_ERROR_CODES.diagnosticsFailed;
+      throw error;
+    }
+    const diagnostics = payload.diagnostics || {};
+    const configured = Boolean(diagnostics.directConfigured || diagnostics.gatewayUrlConfigured);
+    const code = configured ? "" : NOVAPAY_ERROR_CODES.directGatewayNotConfigured;
+    const message = novaPayDiagnosticsSummaryText(payload);
+    setExchangeProcess("novaPay", {
+      status: configured ? "success" : "warning",
+      percent: 100,
+      stage: configured ? "Diagnostics OK" : "Потрібне налаштування",
+      message,
+      code
+    });
+    addAudit(`NovaPay diagnostics: ${message}`, "system");
+    if (silent) saveState();
+    else {
+      alert(message);
+      render();
+    }
+    return payload;
+  } catch (error) {
+    const code = error.code || NOVAPAY_ERROR_CODES.diagnosticsFailed;
+    const message = `${code}: ${error.message}`;
+    setExchangeProcess("novaPay", { status: "error", percent: 100, stage: "Diagnostics failed", message, code });
+    addAudit(`NovaPay diagnostics: ${message}`, "system");
+    if (!silent) {
+      alert(message);
+      render();
+      return null;
+    }
+    saveState();
+    throw error;
+  }
+}
+
+async function checkCrmSqlDiagnostics({ silent = false } = {}) {
+  if (!canCreateDocument("dataExchange") || !canEditField("dataExchangeScope")) {
+    const code = "CRM_SQL_ACCESS_DENIED";
+    const message = "Поточна роль не має права перевіряти CRM SQL.";
+    setExchangeProcess("crmSql", { status: "error", percent: 100, stage: "Доступ заборонено", message: `${code}: ${message}`, code });
+    if (!silent) alert(`${code}: ${message}`);
+    return null;
+  }
+  const endpoint = "/api/crm-sql/latest?limit=50000&scope=full&diagnostics=1";
+  try {
+    setExchangeProcess("crmSql", { status: "running", percent: 20, stage: "SQL diagnostics", message: endpoint, code: "" });
+    const response = await fetch(endpoint, { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) {
+      const error = new Error(data?.error || data?.message || `HTTP ${response.status}`);
+      error.code = data?.errorCode || data?.code || "CRM_SQL_DIAGNOSTICS_FAILED";
+      throw error;
+    }
+    const warningCodes = crmSqlWarningCodes(data.warnings);
+    const code = data.errorCode || warningCodes[0] || "";
+    const message = crmSqlDiagnosticsSummaryText(data.diagnostics || {});
+    setExchangeProcess("crmSql", {
+      status: data.partial ? "warning" : "success",
+      percent: 100,
+      stage: data.partial ? "Diagnostics partial" : "Diagnostics OK",
+      message,
+      code
+    });
+    addAudit(`CRM SQL diagnostics: ${message}${code ? ` Code: ${code}` : ""}`, "system");
+    if (silent) saveState();
+    else {
+      alert(message);
+      render();
+    }
+    return data;
+  } catch (error) {
+    const code = error.code || "CRM_SQL_DIAGNOSTICS_FAILED";
+    const message = `${code}: ${error.message}`;
+    setExchangeProcess("crmSql", { status: "error", percent: 100, stage: "SQL diagnostics failed", message, code });
+    addAudit(`CRM SQL diagnostics: ${message}`, "system");
+    if (!silent) {
+      alert(message);
+      render();
+      return null;
+    }
+    saveState();
+    throw error;
+  }
+}
+
+async function checkNovaPoshtaDiagnostics({ silent = false } = {}) {
+  if (!canTrackMarketplaceDelivery()) {
+    const code = "NP_DIAGNOSTICS_ACCESS_DENIED";
+    const message = "Поточна роль не має права перевіряти Нову пошту.";
+    setExchangeProcess("novaPoshta", { status: "error", percent: 100, stage: "Доступ заборонено", message: `${code}: ${message}`, code });
+    if (!silent) alert(`${code}: ${message}`);
+    return null;
+  }
+  const endpoint = "/api/delivery/nova-poshta/diagnostics?historyFrom=2020-01-01&windowDays=30";
+  try {
+    setExchangeProcess("novaPoshta", { status: "running", percent: 20, stage: "Diagnostics", message: endpoint, code: "" });
+    const response = await fetch(endpoint, { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false) {
+      const error = new Error(payload?.error || payload?.message || `HTTP ${response.status}`);
+      error.code = payload?.errorCode || payload?.code || "NP_DIAGNOSTICS_FAILED";
+      throw error;
+    }
+    const code = payload.errorCode || payload.warningCodes?.[0] || "";
+    const message = novaPoshtaDiagnosticsSummaryText(payload);
+    setExchangeProcess("novaPoshta", {
+      status: code ? "warning" : "success",
+      percent: 100,
+      stage: code ? "Diagnostics warning" : "Diagnostics OK",
+      message,
+      code
+    });
+    addAudit(`Nova Poshta diagnostics: ${message}`, "system");
+    if (silent) saveState();
+    else {
+      alert(message);
+      render();
+    }
+    return payload;
+  } catch (error) {
+    const code = error.code || "NP_DIAGNOSTICS_FAILED";
+    const message = `${code}: ${error.message}`;
+    setExchangeProcess("novaPoshta", { status: "error", percent: 100, stage: "Diagnostics failed", message, code });
+    addAudit(`Nova Poshta diagnostics: ${message}`, "system");
+    if (!silent) {
+      alert(message);
+      render();
+      return null;
+    }
+    saveState();
     throw error;
   }
 }
@@ -8038,7 +8772,7 @@ function renderUnifiedExchangeCenter(settings, disabled = "") {
           title: "CRM SQL → CRM",
           subtitle: "Останній знімок SQL /api/crm-sql/latest без запису назад у 1C.",
           metrics: `<span>Джерело</span><strong>SQL</strong><small>${escapeHtml(dataExchangeState().oneCConnection?.lastSourceModifiedAt || "ще не запускали")}</small>`,
-          actions: `<button class="primary" type="button" data-import-onec-sql ${exchangeDisabled}>Оновити з SQL</button>`
+          actions: `<button class="primary" type="button" data-import-onec-sql ${exchangeDisabled}>Оновити з SQL</button><button class="secondary" type="button" data-check-crm-sql ${exchangeDisabled}>Діагностика</button>`
         })}
         ${renderExchangeSourceCard({
           key: "oneC",
@@ -8059,14 +8793,14 @@ function renderUnifiedExchangeCenter(settings, disabled = "") {
           title: "NovaPay → CRM",
           subtitle: "Отримання платежів через gateway і автоматичне рознесення по ТТН та сумі.",
           metrics: `<span>Транзакції</span><strong>${(state.novaPayTransactions || []).length}</strong><small>${escapeHtml(novaPay.lastMessage || "ще не запускали")}</small>`,
-          actions: `<button class="primary" type="button" data-fetch-novapay-gateway ${novaPayDisabled}>Отримати платежі</button><button class="secondary" type="button" data-reconcile-novapay ${novaPayDisabled}>Звірити</button>`
+          actions: `<button class="primary" type="button" data-fetch-novapay-gateway ${novaPayDisabled}>Отримати платежі</button><button class="secondary" type="button" data-reconcile-novapay ${novaPayDisabled}>Звірити</button><button class="ghost" type="button" data-check-novapay-diagnostics ${novaPayDisabled}>Діагностика</button>`
         })}
         ${renderExchangeSourceCard({
           key: "novaPoshta",
           title: "Нова пошта → CRM",
           subtitle: "Отримання всіх документів / ТТН з кабінету Нова пошта через серверний gateway і зв'язка з CRM-замовленнями.",
           metrics: `<span>Документи / ТТН</span><strong>${npDocuments}</strong><small>до перевірки з CRM: ${npOrders}; API-ключ тільки в .env на сервері</small>`,
-          actions: `<button class="primary" type="button" data-fetch-nova-poshta-documents ${deliveryDisabled}>Отримати всі ТТН</button><button class="secondary" type="button" data-sync-nova-poshta-deliveries ${deliveryDisabled}>Оновити ТТН CRM</button>`
+          actions: `<button class="primary" type="button" data-fetch-nova-poshta-documents ${deliveryDisabled}>Отримати всі ТТН</button><button class="secondary" type="button" data-sync-nova-poshta-deliveries ${deliveryDisabled}>Оновити ТТН CRM</button><button class="ghost" type="button" data-check-nova-poshta-diagnostics ${deliveryDisabled}>Діагностика</button>`
         })}
         ${renderExchangeSourceCard({
           key: "prom",
@@ -8679,7 +9413,7 @@ function renderSaleInvoiceLine(line, index, priceType, context = {}) {
         <select name="productId" data-sale-line-index="${index}" data-sale-product data-linked-parent="product" data-linked-parent-scope="row">
           ${state.products.map((item) => option(item.id, `${item.type === "weapon" ? "Зброя" : "Товар"} · ${item.brand} ${item.model}`, item.id === product?.id)).join("")}
         </select>
-        <span class="small muted">${product ? productCodes(product) : ""}</span>
+        <span class="small muted" data-marketplace-publication-product-codes>${product ? productCodes(product) : ""}</span>
       </td>
       <td><input name="qty" data-sale-line-index="${index}" inputmode="decimal" value="${escapeHtml(line.qty || 1)}"></td>
       <td><input name="price" data-sale-line-index="${index}" inputmode="decimal" data-field-lock="price" value="${escapeHtml(price.amount)}"></td>
@@ -11875,6 +12609,7 @@ function marketplacePublicationDraftLines() {
 
 function renderMarketplacePublicationLine(line, index, names) {
   const product = byId(state.products, line.productId) || state.products[0];
+  const productSearchValue = product ? marketplaceOrderProductSearchLabel(product) : "";
   return `
     <tr data-marketplace-publication-line="${index}">
       <td>
@@ -11883,9 +12618,11 @@ function renderMarketplacePublicationLine(line, index, names) {
         </select>
       </td>
       <td class="line-product">
-        <select name="productId" data-marketplace-publication-line-index="${index}" data-marketplace-publication-product data-linked-parent="product" data-linked-parent-scope="row">
-          ${state.products.map((item) => option(item.id, `${item.brand} ${item.model}`, item.id === product?.id)).join("")}
-        </select>
+        <input type="hidden" name="productId" data-marketplace-publication-line-index="${index}" data-marketplace-publication-product-id data-linked-parent="product" data-linked-parent-scope="row" value="${escapeHtml(product?.id || line.productId || "")}">
+        <div class="product-autocomplete publication-product-autocomplete" data-marketplace-publication-product-autocomplete>
+          <input data-marketplace-publication-product-search value="${escapeHtml(productSearchValue)}" placeholder="Почніть вводити назву, бренд, SKU або код" autocomplete="new-password" aria-autocomplete="list" aria-expanded="false" spellcheck="false">
+          <div class="product-autocomplete-list" data-marketplace-publication-product-suggestions hidden></div>
+        </div>
         <span class="small muted">${product ? productCodes(product) : ""}</span>
       </td>
       <td>
@@ -12038,13 +12775,14 @@ function marketplacePublicationReadiness(publication) {
   const issues = marketplacePublicationMissingFields(publication);
   const danger = issues.filter((issue) => issue.level === "danger");
   const warn = issues.filter((issue) => issue.level !== "danger");
+  if (marketplacePublicationIsPublished(publication)) return { issues, danger, warn, label: "опубліковано", className: "good", bucket: "published" };
   if (danger.length) return { issues, danger, warn, label: "не готова", className: "danger" };
   if (warn.length) return { issues, danger, warn, label: "перевірити", className: "warn" };
-  if (publication.status === "published") return { issues, danger, warn, label: "опубліковано", className: "good" };
   return { issues, danger, warn, label: "готова до обміну", className: "good" };
 }
 
 function syncPublicationReadinessFields(publication) {
+  publication.status = normalizeMarketplacePublicationStatus(publication.status);
   const readiness = marketplacePublicationReadiness(publication);
   publication.validation = readiness.issues.map(({ key, label, level }) => ({ key, label, level }));
   publication.readiness = readiness.label;
@@ -12053,6 +12791,7 @@ function syncPublicationReadinessFields(publication) {
 
 function renderPublicationIssueCompact(publication) {
   const readiness = marketplacePublicationReadiness(publication);
+  if (marketplacePublicationIsPublished(publication)) return `<span class="pill good">${escapeHtml(readiness.label)}</span>`;
   if (!readiness.issues.length) return `<span class="pill ${readiness.className}">${escapeHtml(readiness.label)}</span>`;
   return `<span class="pill ${readiness.className}">${readiness.issues.length} не виконано</span>`;
 }
@@ -12079,18 +12818,31 @@ function publicationFieldClass(issues, keys, base = "field") {
 function renderMarketplacePublicationControl() {
   const rows = state.marketplacePublications.map((publication) => {
     const readiness = marketplacePublicationReadiness(publication);
-    return { publication, readiness };
+    const bucket = marketplacePublicationIsPublished(publication)
+      ? "published"
+      : readiness.danger.length
+        ? "blockers"
+        : readiness.warn.length
+          ? "warnings"
+          : "ready";
+    return { publication, readiness, bucket };
   });
-  const needsAttention = rows.filter(({ publication, readiness }) => readiness.issues.length || publication.status !== "published");
-  const blockers = rows.filter(({ readiness }) => readiness.danger.length).length;
-  const warnings = rows.filter(({ readiness }) => !readiness.danger.length && readiness.warn.length).length;
-  const ready = rows.filter(({ publication, readiness }) => !readiness.issues.length && publication.status !== "published").length;
-  const published = rows.filter(({ publication, readiness }) => !readiness.issues.length && publication.status === "published").length;
+  const blockers = rows.filter(({ bucket }) => bucket === "blockers").length;
+  const warnings = rows.filter(({ bucket }) => bucket === "warnings").length;
+  const ready = rows.filter(({ bucket }) => bucket === "ready").length;
+  const published = rows.filter(({ bucket }) => bucket === "published").length;
+  const needsAttention = blockers + warnings;
+  const orderedRows = [...rows].sort((first, second) => {
+    const order = { blockers: 0, warnings: 1, ready: 2, published: 3 };
+    return order[first.bucket] - order[second.bucket]
+      || String(second.publication.lastSync || "").localeCompare(String(first.publication.lastSync || ""))
+      || String(first.publication.marketplace || "").localeCompare(String(second.publication.marketplace || ""));
+  });
   return `
     <section class="panel section-band">
       <div class="split">
         <h2>Контроль виставлення товарів</h2>
-        <span class="pill ${blockers ? "danger" : warnings ? "warn" : "good"}">${needsAttention.length} потребують уваги</span>
+        <span class="pill ${blockers ? "danger" : warnings ? "warn" : "good"}">${needsAttention} потребують уваги</span>
       </div>
       <div class="grid four">
         <article class="card metric danger"><span>Блокери</span><strong>${blockers}</strong><small>Без цих полів публікацію не відправляємо.</small></article>
@@ -12102,7 +12854,7 @@ function renderMarketplacePublicationControl() {
         <table>
           <thead><tr><th>Публікація</th><th>Товар</th><th>Готовність</th><th>Обмін</th><th>Що виправити</th></tr></thead>
           <tbody>
-            ${needsAttention.slice(0, 12).map(({ publication, readiness }) => `
+            ${orderedRows.slice(0, 20).map(({ publication, readiness }) => `
               <tr class="clickable-row ${readiness.issues.length ? "row-has-issues" : ""}" data-edit-publication="${escapeHtml(publication.id)}" title="Відкрити публікацію">
                 <td><strong>${escapeHtml(publication.marketplace || "-")} · ${escapeHtml(publication.sku || "-")}</strong><br><span class="small muted">${escapeHtml(publication.externalId || "-")}</span></td>
                 <td>${escapeHtml(productName(publication.productId))}</td>
@@ -12110,7 +12862,7 @@ function renderMarketplacePublicationControl() {
                 <td>${statusPill(publication.status)}<br><span class="small muted">${escapeHtml(publication.lastSync || "ще не синхронізовано")}</span></td>
                 <td><div class="issue-pill-list">${readiness.issues.slice(0, 5).map((issue) => `<span class="pill ${issue.level === "danger" ? "danger" : "warn"}">${escapeHtml(issue.label)}</span>`).join("") || '<span class="pill good">можна синхронізувати</span>'}</div></td>
               </tr>
-            `).join("") || '<tr><td colspan="5" class="muted">Критичних проблем у публікаціях немає.</td></tr>'}
+            `).join("") || '<tr><td colspan="5" class="muted">Публікацій маркетплейсів ще немає. Запустіть імпорт Rozetka у Налаштування → Обмін даними.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -12485,7 +13237,7 @@ function upsertRozetkaPublication(item, product) {
     price: parseDecimal(item.price ?? item.price_promo ?? item.price_old, product.price || 0),
     currency: "UAH",
     stockQty: Number(item.stock_quantity || 0),
-    status: item.upload_status === 0 ? "needs_sync" : "published",
+    status: rozetkaPublicationStatusFromSource(item, existing?.status || "published"),
     photosStatus: Array.isArray(item.photo) && item.photo.length ? "ok" : "missing",
     lastSync: currentTimestamp(),
     manager: existing?.manager || state.currentManager,
@@ -12493,9 +13245,10 @@ function upsertRozetkaPublication(item, product) {
   };
   if (existing) {
     Object.assign(existing, payload, { id: existing.id });
+    syncPublicationReadinessFields(existing);
     return "updated";
   }
-  state.marketplacePublications.unshift({ id: uniqueId("pub"), ...payload });
+  state.marketplacePublications.unshift(syncPublicationReadinessFields({ id: uniqueId("pub"), ...payload }));
   return "created";
 }
 
@@ -13564,7 +14317,7 @@ function renderMarketplaces() {
                     <button class="secondary" data-invoice-marketplace-order="${order.id}" ${canOrder && order.status !== "new_order" && order.status !== "cancelled" && !order.invoiceId ? "" : "disabled"}>Накладна</button>
                     <button class="${orderActionClass(order, "picked")}" data-marketplace-picked="${order.id}" ${canPicking && deliveryAction.canPicked ? "" : "disabled"}>Відбірка ОК</button>
                     <button class="${orderActionClass(order, "handoverDelivery", "secondary")}" data-marketplace-handover-delivery="${order.id}" ${canWarehouseHandover && deliveryAction.canHandover ? "" : "disabled"}>Передати логісту</button>
-                    <button class="${orderActionClass(order, "logisticsAccept", "secondary")}" data-marketplace-to-delivery="${order.id}" ${canLogisticsAccept && deliveryAction.canLogisticsAccept ? "" : "disabled"}>Логіст прийняв</button>
+                    <button class="${orderActionClass(order, "logisticsAccept", "secondary")}" data-marketplace-to-delivery="${order.id}" ${canLogisticsAccept && deliveryAction.canLogisticsAccept ? "" : "disabled"}>Передано перевізнику</button>
                     <button class="${orderActionClass(order, "trackDelivery", "secondary")}" data-track-marketplace-delivery="${order.id}" ${canDelivery && deliveryAction.canTrack ? "" : "disabled"}>Статус доставки</button>
                     <button class="secondary" data-marketplace-upsell="${order.id}" ${canOrder && ["confirmed_by_client", "upsell", "waiting_payment", "paid"].includes(order.status) ? "" : "disabled"}>Апсел</button>
                     <button class="${orderActionClass(order, "complete")}" data-marketplace-complete="${order.id}" ${canOrder && ["delivered", "completed"].includes(order.status) ? "" : "disabled"}>Завершено</button>
@@ -17016,6 +17769,10 @@ function updateMarketplaceOrderDocument(form) {
   if (!order) return alert("Замовлення маркетплейсу не знайдено.");
   if (!canEditMarketplaceOrder()) return alert("Поточна роль не має права змінювати замовлення маркетплейсів.");
   const previousStatus = order.status;
+  const previousDeliveryStatus = order.delivery?.status || "";
+  const previousDeliveryTtn = String(order.delivery?.ttn || "").trim();
+  const requestedCarrierStatus = ["logistics_accepted", "sent_to_delivery", "in_transit", "arrived_branch", "delivered"].includes(data.deliveryStatus || "");
+  if (requestedCarrierStatus && !String(data.deliveryTtn || "").trim()) return alert("Спочатку внесіть ТТН. Статус перевізника без ТТН не зберігається.");
   const lines = collectMarketplaceOrderLinesFromForm(form);
   if (!lines.length) return alert("Додайте хоча б один товар до замовлення.");
   for (const [index, line] of lines.entries()) {
@@ -17060,8 +17817,13 @@ function updateMarketplaceOrderDocument(form) {
     warehouse: data.deliveryWarehouse || "",
     ttn: data.deliveryTtn || "",
     status: data.deliveryStatus,
+    statusSource: previousDeliveryStatus !== data.deliveryStatus ? "manual" : (order.delivery?.statusSource || ""),
     apiStatus: order.delivery?.apiStatus || "Змінено менеджером"
   };
+  if (String(order.delivery.ttn || "").trim() !== previousDeliveryTtn) {
+    order.delivery.ttnEnteredAt = currentTimestamp();
+    order.delivery.ttnEnteredBy = state.currentManager;
+  }
   order.payment = {
     ...(order.payment || {}),
     status: data.paymentStatus,
@@ -17087,6 +17849,9 @@ function updateMarketplaceOrderDocument(form) {
     repeat: data.repeatDate || "",
     cancelled: data.cancelledDate || ""
   };
+  if (marketplaceOrderHasTtn(order) && ["warehouse_handover", "logistics_accepted", "sent_to_delivery"].includes(order.delivery.status || "") && !order.warehouseFlow?.logisticsAcceptedAt) {
+    markMarketplaceOrderSentToCarrierByTtn(order, { audit: true });
+  }
   const changedDateKey = funnelDateKey(order.status);
   if (previousStatus !== order.status && changedDateKey && !order.dates[changedDateKey]) order.dates[changedDateKey] = today;
   if (order.status === "waiting_payment" && order.payment.status === "expected") order.payment.status = "pending";
@@ -17190,6 +17955,37 @@ function generateMarketplaceTtn(order) {
   return `${marketplaceTtnPrefix(order.delivery?.service)}-${today.replaceAll("-", "")}-${String(Date.now()).slice(-6)}`;
 }
 
+function marketplaceDeliveryHasDownloadedCarrierStatus(order) {
+  const delivery = order?.delivery || {};
+  return ["carrier_api", "carrier_document"].includes(delivery.statusSource)
+    || Boolean(delivery.lastCarrierStatusAt)
+    || Boolean(delivery.trackingDetails?.statusCode && delivery.lastCheck);
+}
+
+function marketplaceDeliveryDeliveredByCarrier(order) {
+  return (order?.delivery?.status || "") === "delivered" && marketplaceDeliveryHasDownloadedCarrierStatus(order);
+}
+
+function markMarketplaceOrderSentToCarrierByTtn(order, { audit = true } = {}) {
+  if (!order || !marketplaceOrderHasTtn(order)) return false;
+  order.delivery = { ...(order.delivery || {}) };
+  order.warehouseFlow = { ...(order.warehouseFlow || {}) };
+  const status = order.delivery.status || "new";
+  if (["in_transit", "arrived_branch", "delivery_problem", "delivered"].includes(status)) return false;
+  if (!["warehouse_handover", "logistics_accepted", "sent_to_delivery"].includes(status)) return false;
+  setMarketplaceOrderWorkflowStage(order, "shipped");
+  order.delivery.status = "sent_to_delivery";
+  order.delivery.statusSource = "ttn_entry";
+  order.delivery.trackingProvider = deliveryProviderKey(order.delivery.service || "");
+  order.delivery.ttnEnteredAt = order.delivery.ttnEnteredAt || currentTimestamp();
+  order.delivery.ttnEnteredBy = order.delivery.ttnEnteredBy || state.currentManager;
+  order.delivery.apiStatus = "ТТН внесено, замовлення передано перевізнику; очікується статус від перевізника";
+  order.warehouseFlow.logisticsAcceptedAt = order.warehouseFlow.logisticsAcceptedAt || currentTimestamp();
+  order.warehouseFlow.logisticsAcceptedBy = order.warehouseFlow.logisticsAcceptedBy || state.currentManager;
+  if (audit) addAudit(`ТТН ${order.delivery.ttn} внесено для ${order.externalOrderId}; замовлення передано перевізнику`, "system");
+  return true;
+}
+
 function handoverMarketplaceOrderToDelivery(id) {
   if (!canHandoverMarketplaceOrderToLogistics()) return alert("Поточна роль не має права передавати замовлення логісту.");
   const order = byId(state.marketplaceOrders, id);
@@ -17198,11 +17994,12 @@ function handoverMarketplaceOrderToDelivery(id) {
   order.delivery = { ...(order.delivery || {}) };
   order.warehouseFlow = { ...(order.warehouseFlow || {}) };
   order.delivery.status = "warehouse_handover";
-  order.delivery.ttn = order.delivery.ttn || generateMarketplaceTtn(order);
-  order.delivery.apiStatus = "Склад передав замовлення логісту, очікує підтвердження логіста";
+  order.delivery.apiStatus = "Склад передав замовлення логісту; очікується введення ТТН";
   order.warehouseFlow.deliveryHandoverAt = currentTimestamp();
   order.warehouseFlow.deliveryHandoverBy = state.currentManager;
-  addAudit(`Замовлення ${order.externalOrderId} передано логісту, ТТН ${order.delivery.ttn}`, "system");
+  addAudit(`Замовлення ${order.externalOrderId} передано логісту; очікується введення ТТН`, "system");
+  state.currentView = "sales";
+  state.currentSubViews = { ...(state.currentSubViews || {}), sales: "logistics" };
   refreshMarketplaceOrderAfterAction(order.id);
 }
 
@@ -17214,15 +18011,8 @@ function sendMarketplaceOrderToDelivery(id) {
   order.delivery = { ...(order.delivery || {}) };
   order.warehouseFlow = { ...(order.warehouseFlow || {}) };
   if (order.delivery.status !== "warehouse_handover") return alert("Спочатку склад має передати замовлення логісту.");
-  setMarketplaceOrderWorkflowStage(order, "shipped");
-  order.delivery.status = "logistics_accepted";
-  order.delivery.ttn = order.delivery.ttn || generateMarketplaceTtn(order);
-  order.delivery.trackingProvider = deliveryProviderKey(order.delivery.service || "");
-  order.delivery.apiStatus = "Логіст підтвердив передачу, готово до API-трекінгу";
-  order.delivery.lastCheck = currentTimestamp();
-  order.warehouseFlow.logisticsAcceptedAt = currentTimestamp();
-  order.warehouseFlow.logisticsAcceptedBy = state.currentManager;
-  addAudit(`Логіст підтвердив передачу замовлення ${order.externalOrderId} в доставку, ТТН ${order.delivery.ttn}`, "system");
+  if (!marketplaceOrderHasTtn(order)) return alert("Спочатку внесіть ТТН. Перехід у \"Передано перевізнику\" відбудеться після збереження ТТН.");
+  markMarketplaceOrderSentToCarrierByTtn(order, { audit: true });
   refreshMarketplaceOrderAfterAction(order.id);
 }
 
@@ -17270,8 +18060,10 @@ function applyNovaPoshtaTrackingPayload(order, payload) {
   const statusText = payload.status || tracking.status || "Статус отримано";
   order.delivery = { ...(order.delivery || {}) };
   order.delivery.status = payload.deliveryStatus || novaPoshtaDeliveryStatus(statusCode, statusText);
+  order.delivery.statusSource = "carrier_api";
   order.delivery.apiStatus = `${payload.provider || "Нова пошта"}: ${statusText}${statusCode ? ` [${statusCode}]` : ""}`;
   order.delivery.lastCheck = payload.checkedAt || currentTimestamp();
+  order.delivery.lastCarrierStatusAt = order.delivery.lastCheck;
   order.delivery.trackingProvider = "nova_poshta";
   order.delivery.trackingDetails = {
     provider: payload.provider || "Нова пошта",
@@ -17350,9 +18142,11 @@ function applyNovaPoshtaDocumentToOrder(document) {
   order.delivery.service = order.delivery.service || "Нова пошта";
   order.delivery.ttn = order.delivery.ttn || document.ttn || document.number || "";
   order.delivery.status = document.deliveryStatus || novaPoshtaDeliveryStatus(document.statusCode, document.status);
+  order.delivery.statusSource = "carrier_document";
   order.delivery.trackingProvider = "nova_poshta";
   order.delivery.apiStatus = `Нова пошта: ${document.status || "документ отримано"}${document.statusCode ? ` [${document.statusCode}]` : ""}`;
   order.delivery.lastCheck = document.lastCheck || currentTimestamp();
+  order.delivery.lastCarrierStatusAt = order.delivery.lastCheck;
   order.delivery.trackingDetails = {
     provider: "Нова пошта",
     statusCode: document.statusCode || "",
@@ -17613,7 +18407,10 @@ async function trackMarketplaceDelivery(id) {
   if (!order) return;
   order.delivery = { ...(order.delivery || {}) };
   if (!order.delivery.ttn) return alert("Для API-відстеження потрібно внести або створити ТТН.");
-  if (["new", "sent_to_warehouse", "picked", "warehouse_handover"].includes(order.delivery.status || "new")) return alert("Спочатку логіст має підтвердити передачу в доставку.");
+  if ((order.delivery.status || "new") === "warehouse_handover" && marketplaceOrderHasTtn(order)) {
+    markMarketplaceOrderSentToCarrierByTtn(order, { audit: true });
+  }
+  if (["new", "sent_to_warehouse", "picked", "warehouse_handover"].includes(order.delivery.status || "new")) return alert("Спочатку внесіть ТТН і передайте замовлення перевізнику.");
   if (order.status === "cancelled") return alert("Скасоване замовлення не можна переводити в доставлено.");
   const provider = deliveryProviderForOrder(order);
   order.delivery.lastCheck = currentTimestamp();
@@ -17647,8 +18444,10 @@ async function trackMarketplaceDelivery(id) {
       const statusCode = payload.statusCode || tracking.statusCode || "";
       const statusText = payload.status || tracking.status || "Статус отримано";
       order.delivery.status = payload.deliveryStatus || novaPoshtaDeliveryStatus(statusCode, statusText);
+      order.delivery.statusSource = "carrier_api";
       order.delivery.apiStatus = `${payload.provider || provider.provider}: ${statusText}${statusCode ? ` [${statusCode}]` : ""}`;
       order.delivery.lastCheck = payload.checkedAt || currentTimestamp();
+      order.delivery.lastCarrierStatusAt = order.delivery.lastCheck;
       order.delivery.trackingDetails = {
         provider: payload.provider || provider.provider,
         statusCode,
@@ -19432,6 +20231,9 @@ function oneCRowNumber(row, keys, fallback = 0) {
   return fallback;
 }
 
+const ONEC_PRODUCT_NAME_KEYS = ["model", "name", "title", "product", "productName", "product_name", "fullName", "full_name", "entityName", "entity_name", "nomenclature", "nomenclatureName", "nomenclature_name", "itemName", "item_name", "goodsName", "goods_name"];
+const ONEC_CLIENT_NAME_KEYS = ["name", "fullName", "full_name", "clientName", "client_name", "customerName", "customer_name", "counterpartyName", "counterparty_name", "entityName", "entity_name"];
+
 function findProductForOneC(row) {
   const id = oneCRowText(row, ["crmId", "productCrmId", "productId", "id", "oneCRef", "one_c_ref", "externalId"]);
   const internalCode = oneCRowText(row, ["internalCode", "internal_code", "sku", "productCode", "product_code", "code", "article"]);
@@ -19448,7 +20250,7 @@ function upsertOneCProduct(row) {
   const sourceFile = oneCRowText(row, ["sourceFile", "source_file"], "");
   const importedAt = oneCRowText(row, ["importedAt", "imported_at"], currentTimestamp());
   const importedBrand = cleanImportedSourceBrand(oneCRowText(row, ["brand", "producer", "manufacturer"], ""));
-  const importedName = cleanImportedProductName(oneCRowText(row, ["model", "name", "title", "productName", "product_name"], "Товар 1C"));
+  const importedName = cleanImportedProductName(oneCRowText(row, ONEC_PRODUCT_NAME_KEYS, "Товар 1C"));
   const importedCategory = oneCRowText(row, ["productGroupName", "product_group_name", "category", "group", "categoryName", "category_name"], "1C імпорт");
   if (!product) {
     product = {
@@ -19481,7 +20283,7 @@ function upsertOneCProduct(row) {
     };
     state.products.push(product);
   }
-  product.model = cleanImportedProductName(oneCRowText(row, ["model", "name", "title", "productName", "product_name"], product.model));
+  product.model = cleanImportedProductName(oneCRowText(row, ONEC_PRODUCT_NAME_KEYS, product.model));
   product.brand = importedBrand || cleanImportedSourceBrand(product.brand);
   product.type = oneCRowText(row, ["type", "productType", "product_type"], product.type);
   product.category = oneCRowText(row, ["productGroupName", "product_group_name", "category", "group", "categoryName", "category_name"], product.category);
@@ -19512,7 +20314,7 @@ function upsertOneCProduct(row) {
 function findClientForOneC(row) {
   const id = oneCRowText(row, ["crmId", "clientCrmId", "clientId", "customerId", "counterpartyCode", "counterparty_code", "id", "externalId"]);
   const taxId = oneCRowText(row, ["edrpou", "taxId", "tax_id", "code"]);
-  const name = oneCRowText(row, ["name", "fullName", "full_name"]);
+  const name = oneCRowText(row, ONEC_CLIENT_NAME_KEYS);
   const phone = oneCRowText(row, "phone");
   const email = oneCRowText(row, "email");
   return byId(state.clients, id)
@@ -19532,7 +20334,7 @@ function upsertOneCClient(row) {
   if (!client) {
     client = {
       id: oneCRowText(row, ["crmId", "clientCrmId", "clientId", "customerId", "counterpartyCode", "counterparty_code", "id", "externalId"], uniqueId("c")),
-      name: oneCRowText(row, ["name", "fullName", "full_name"], "Клієнт 1C"),
+      name: oneCRowText(row, ONEC_CLIENT_NAME_KEYS, "Клієнт 1C"),
       type: oneCRowText(row, ["type", "sourceModule", "source_module"], "B2C"),
       manager: oneCRowText(row, "manager", state.currentManager),
       paymentTerms: 0,
@@ -19563,7 +20365,7 @@ function upsertOneCClient(row) {
     };
     state.clients.push(client);
   }
-  client.name = oneCRowText(row, ["name", "fullName", "full_name"], client.name);
+  client.name = oneCRowText(row, ONEC_CLIENT_NAME_KEYS, client.name);
   client.type = oneCRowText(row, ["type", "sourceModule", "source_module"], client.type);
   client.manager = oneCRowText(row, "manager", client.manager || state.currentManager);
   client.edrpou = oneCRowText(row, ["edrpou", "taxId", "tax_id", "code"], client.edrpou || "");
@@ -19700,8 +20502,16 @@ function upsertOneCFirm(row) {
 }
 
 function upsertOneCStock(row) {
-  const product = findProductForOneC(row);
-  if (!product) return null;
+  let product = findProductForOneC(row);
+  if (!product) {
+    product = upsertOneCProduct({
+      ...row,
+      name: oneCRowText(row, ONEC_PRODUCT_NAME_KEYS, oneCRowText(row, ["productId", "productCode", "product_code", "sku"], "Товар 1C")),
+      id: oneCRowText(row, ["productCrmId", "productId", "productCode", "product_code", "sku", "internalCode", "internal_code"], uniqueId("p")),
+      internalCode: oneCRowText(row, ["internalCode", "internal_code", "sku", "productCode", "product_code"], ""),
+      sourceFile: oneCRowText(row, ["sourceFile", "source_file"], "CRM SQL stock")
+    });
+  }
   const warehouse = upsertOneCWarehouse(row);
   const warehouseId = warehouse?.id || oneCRowText(row, ["warehouseId", "warehouseCode", "warehouse_code"], state.warehouses[0]?.id || "wh-main");
   const warehouseLabel = warehouse?.name || oneCRowText(row, ["warehouse", "warehouseName", "warehouse_name"], warehouseId);
@@ -19725,9 +20535,9 @@ function upsertOneCStock(row) {
     stock = { productId: product.id, warehouseId, firmId, clientId, qty: 0 };
     state.stock.push(stock);
   }
-  stock.qty = oneCRowNumber(row, ["qty", "quantity", "availableQuantity", "available_quantity", "totalQuantity", "total_quantity", "balance"], stock.qty || 0);
-  stock.available = oneCRowNumber(row, ["available", "availableQuantity", "available_quantity"], stock.available || stock.qty || 0);
-  stock.reserved = oneCRowNumber(row, ["reserved", "reservedQuantity", "reserved_quantity"], stock.reserved || 0);
+  stock.qty = oneCRowNumber(row, ["qty", "quantity", "availableQuantity", "available_quantity", "availableQty", "available_qty", "totalQuantity", "total_quantity", "balance"], stock.qty || 0);
+  stock.available = oneCRowNumber(row, ["available", "availableQuantity", "available_quantity", "availableQty", "available_qty"], stock.available || stock.qty || 0);
+  stock.reserved = oneCRowNumber(row, ["reserved", "reservedQuantity", "reserved_quantity", "reservedQty", "reserved_qty"], stock.reserved || 0);
   return stock;
 }
 
@@ -19764,9 +20574,10 @@ function upsertOneCReceivableMirror(row) {
     };
     state.invoices.push(invoice);
   }
-  const debt = oneCRowNumber(row, ["debt", "balance", "amountDebt", "amount_debt"], invoiceDebt(invoice));
+  const signedDebt = oneCRowNumber(row, ["debt", "balance", "amount", "amountDebt", "amount_debt"], invoiceDebt(invoice));
+  const debt = Math.abs(signedDebt);
   const paid = oneCRowNumber(row, "paid", invoice.paid || 0);
-  const total = oneCRowNumber(row, ["total", "amount", "turnover", "balanceTotal", "balance_total"], debt + paid);
+  const total = Math.abs(oneCRowNumber(row, ["total", "amountAbs", "amount_abs", "turnover", "balanceTotal", "balance_total"], debt + paid));
   invoice.clientId = client?.id || invoice.clientId || "";
   invoice.manager = oneCRowText(row, "manager", invoice.manager || state.currentManager);
   invoice.firmId = oneCRowText(row, ["firmId", "firmCode", "firm_code", "organizationCode", "organization_code"], invoice.firmId || state.settings.firms[0]?.id || "sql-main");
@@ -19776,6 +20587,8 @@ function upsertOneCReceivableMirror(row) {
   invoice.total = total;
   invoice.paid = paid || Math.max(0, total - debt);
   invoice.status = invoiceDebt(invoice) <= 0 ? "paid" : "partial";
+  invoice.balanceAmount = signedDebt;
+  invoice.balanceSign = oneCRowText(row, ["balanceSign", "balance_sign"], signedDebt < 0 ? "negative" : "positive");
   invoice.comment = oneCRowText(row, "comment", invoice.comment || "CRM SQL receivable");
   return invoice;
 }
@@ -19965,17 +20778,18 @@ async function importOneCSqlLatestFromServer({ silent = false } = {}) {
     const warnings = Array.isArray(data.warnings) && data.warnings.length
       ? ` Попередження: ${data.warnings.length}${data.errorCode ? `; код ${data.errorCode}` : ""}.`
       : "";
+    const diagnosticsText = crmSqlDiagnosticsSummaryText(data.diagnostics || {});
     updateOneCConnectionStatus({
       lastImport: currentTimestamp(),
       lastStatus: "imported",
       lastSourceFile: "CRM SQL API",
       lastSourceModifiedAt: data.generatedAt || "",
-      lastMessage: `OK: імпортовано з CRM SQL (${oneCImportSummaryText(summary)}).${warnings}`
+      lastMessage: `OK: імпортовано з CRM SQL (${oneCImportSummaryText(summary)}).${diagnosticsText}${warnings}`
     });
-    setExchangeProcess("crmSql", { status: data.partial ? "error" : "success", percent: 100, stage: data.partial ? "Завантажено частково" : "OK", message: `CRM SQL: ${oneCImportSummaryText(summary)}${warnings}`, code: data.errorCode || "" });
-    addAudit(`Імпортовано CRM SQL -> CRM: ${oneCImportSummaryText(summary)}${warnings}`, "system");
+    setExchangeProcess("crmSql", { status: data.partial ? "warning" : "success", percent: 100, stage: data.partial ? "Завантажено частково" : "OK", message: `CRM SQL: ${oneCImportSummaryText(summary)}.${diagnosticsText}${warnings}`, code: data.errorCode || "" });
+    addAudit(`Імпортовано CRM SQL -> CRM: ${oneCImportSummaryText(summary)}.${diagnosticsText}${warnings}`, "system");
     render();
-    if (!silent) alert(`Імпортовано з CRM SQL: ${oneCImportSummaryText(summary)}${warnings}`);
+    if (!silent) alert(`Імпортовано з CRM SQL: ${oneCImportSummaryText(summary)}.${diagnosticsText}${warnings}`);
   } catch (error) {
     const code = "CRM_SQL_IMPORT_ERROR";
     updateOneCConnectionStatus({
@@ -20159,6 +20973,22 @@ document.addEventListener("click", (event) => {
       dataset: clientLogDataset(loggedTarget.dataset || {}),
       formAction: loggedTarget.closest?.("form[data-action]")?.dataset.action || ""
     });
+  }
+  const productSuggestion = event.target.closest("[data-marketplace-order-product-option]");
+  if (productSuggestion) {
+    selectMarketplaceOrderProductOption(productSuggestion);
+    return;
+  }
+  const publicationProductSuggestion = event.target.closest("[data-marketplace-publication-product-option]");
+  if (publicationProductSuggestion) {
+    selectMarketplacePublicationProductOption(publicationProductSuggestion);
+    return;
+  }
+  if (!event.target.closest("[data-marketplace-order-product-autocomplete]")) {
+    hideMarketplaceOrderProductSuggestions();
+  }
+  if (!event.target.closest("[data-marketplace-publication-product-autocomplete]")) {
+    hideMarketplacePublicationProductSuggestions();
   }
   const productRow = event.target.closest("[data-open-product]");
   if (productRow && !event.target.closest("button, a, input, select, textarea, label")) {
@@ -20610,6 +21440,10 @@ document.addEventListener("click", (event) => {
   if (target.dataset.importOnecSql !== undefined) {
     importOneCSqlLatestFromServer();
   }
+  if (target.dataset.checkCrmSql !== undefined) {
+    checkCrmSqlDiagnostics().catch((error) => alert(`CRM_SQL_DIAGNOSTICS_ERROR: ${error.message}`));
+    return;
+  }
   if (target.dataset.toggleOnecAutoImport !== undefined) {
     setOneCAutoImport(!oneCAutoImportEnabled);
   }
@@ -20644,6 +21478,10 @@ document.addEventListener("click", (event) => {
     pullNovaPoshtaDocumentsFromGateway().catch((error) => alert(`NP_DOCUMENTS_BATCH_ERROR: ${error.message}`));
     return;
   }
+  if (target.dataset.checkNovaPoshtaDiagnostics !== undefined) {
+    checkNovaPoshtaDiagnostics().catch((error) => alert(`NP_DIAGNOSTICS_ERROR: ${error.message}`));
+    return;
+  }
   if (target.dataset.syncNovaPoshtaDeliveries !== undefined) {
     syncNovaPoshtaDeliveries().catch((error) => alert(`NP_DELIVERY_BATCH_ERROR: ${error.message}`));
     return;
@@ -20658,6 +21496,10 @@ document.addEventListener("click", (event) => {
   }
   if (target.dataset.fetchNovapayGateway !== undefined) {
     pullNovaPayPaymentsFromGateway();
+    return;
+  }
+  if (target.dataset.checkNovapayDiagnostics !== undefined) {
+    checkNovaPayDiagnostics().catch((error) => alert(`NPAY_DIAGNOSTICS_ERROR: ${error.message}`));
     return;
   }
   if (target.dataset.reconcileNovapay !== undefined) {
@@ -20807,6 +21649,15 @@ document.addEventListener("toggle", (event) => {
   }
 }, true);
 
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches("[data-marketplace-order-product-search]")) {
+    updateMarketplaceOrderProductSuggestions(event.target);
+  }
+  if (event.target.matches("[data-marketplace-publication-product-search]")) {
+    updateMarketplacePublicationProductSuggestions(event.target);
+  }
+});
+
 document.addEventListener("change", (event) => {
   const changedField = event.target.closest?.("input, select, textarea");
   const changedForm = changedField?.closest?.("form[data-action]");
@@ -20837,6 +21688,14 @@ document.addEventListener("change", (event) => {
   }
   if (event.target.matches('[data-marketplace-order-line] [name="lineProductId"]')) {
     syncMarketplaceOrderLineProduct(event.target);
+  }
+  if (event.target.matches("[data-marketplace-order-product-search]")) {
+    syncMarketplaceOrderLineProductSearch(event.target);
+    updateMarketplaceOrderProductSuggestions(event.target);
+  }
+  if (event.target.matches("[data-marketplace-publication-product-search]")) {
+    syncMarketplacePublicationProductSearch(event.target);
+    updateMarketplacePublicationProductSuggestions(event.target);
   }
   if (event.target.matches("input[data-linked-requisite]")) {
     persistLinkedRequisiteInput(event.target);
@@ -21265,6 +22124,15 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.matches("[data-marketplace-order-product-search]")) {
+    syncMarketplaceOrderLineProductSearch(event.target);
+    updateMarketplaceOrderProductSuggestions(event.target);
+    return;
+  }
+  if (event.target.matches("[data-marketplace-publication-product-search]")) {
+    updateMarketplacePublicationProductSuggestions(event.target);
+    return;
+  }
   if (event.target.matches("[data-smart-list-date]")) {
     const frame = event.target.closest("[data-smart-list-key]");
     if (!frame) return;

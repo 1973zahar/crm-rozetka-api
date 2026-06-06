@@ -919,6 +919,11 @@ select[multiple] {
 
 .order-lines-editor .table-wrap {
   max-height: 360px;
+  overflow: visible;
+}
+
+.table-wrap.invoice-lines {
+  overflow: visible;
 }
 
 .order-lines-editor table {
@@ -932,6 +937,65 @@ select[multiple] {
 
 .order-lines-editor .input-action {
   grid-template-columns: minmax(120px, 1fr) minmax(118px, auto) auto;
+}
+
+.product-autocomplete {
+  position: relative;
+  min-width: 260px;
+}
+
+.product-autocomplete input {
+  width: 100%;
+}
+
+.product-autocomplete-list {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: min(520px, 80vw);
+  max-height: 320px;
+  overflow: auto;
+  display: grid;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.product-autocomplete-list[hidden] {
+  display: none;
+}
+
+.product-autocomplete-option {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.product-autocomplete-option:hover,
+.product-autocomplete-option:focus {
+  background: #eef5f1;
+}
+
+.product-autocomplete-option strong {
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.product-autocomplete-option span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 input[type="file"] {
@@ -1586,6 +1650,10 @@ button.danger,
   min-width: 260px;
 }
 
+.invoice-lines .publication-product-autocomplete {
+  min-width: 360px;
+}
+
 .invoice-lines .marketplace-requirements-cell {
   min-width: 360px;
 }
@@ -1641,6 +1709,18 @@ button.danger,
   overflow: auto;
   padding-right: 4px;
   scrollbar-gutter: stable;
+}
+
+.logistics-stage {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.logistics-stage:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 
 .funnel-grid {
