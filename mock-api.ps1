@@ -12,14 +12,27 @@ $Address = [System.Net.IPAddress]::Parse($BindAddress)
 $Script:RozetkaAccessToken = ""
 $Script:CrmLogPath = ""
 $Script:CurrentRequestLogContext = $null
+$Script:MarketplaceCrmEnvPath = ""
 
 try {
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch {
 }
 
+function Get-MarketplaceCrmEnvPath {
+  if (-not [string]::IsNullOrWhiteSpace($Script:MarketplaceCrmEnvPath)) {
+    return $Script:MarketplaceCrmEnvPath
+  }
+  $ConfiguredPath = [Environment]::GetEnvironmentVariable("MARKETPLACE_CRM_ENV_PATH", "Process")
+  if ([string]::IsNullOrWhiteSpace($ConfiguredPath)) {
+    $ConfiguredPath = Join-Path $Root ".env"
+  }
+  $Script:MarketplaceCrmEnvPath = [System.IO.Path]::GetFullPath($ConfiguredPath)
+  return $Script:MarketplaceCrmEnvPath
+}
+
 function Import-EnvFile {
-  $EnvPath = Join-Path $Root ".env"
+  $EnvPath = Get-MarketplaceCrmEnvPath
   if (-not (Test-Path -LiteralPath $EnvPath -PathType Leaf)) {
     return
   }
@@ -183,7 +196,18 @@ function Get-CrmSqlApiRows {
     return @($Data)
   }
 
-  foreach ($Key in @("items", "data", "rows", "products", "customers", "warehouses", "firms", "organizations", "receivables", "stock")) {
+  foreach ($Key in @(
+    "items", "data", "rows", "result", "results",
+    "products", "nomenclature", "productPrices", "product_prices",
+    "clients", "customers", "counterparties",
+    "warehouses", "firms", "organizations",
+    "receivables", "counterpartyBalances", "counterparty_balances",
+    "balances", "balanceSummary", "balance_summary",
+    "counterpartyBalanceSummary", "counterparty_balance_summary",
+    "stock", "stockBalances", "stock_balances",
+    "serialStock", "serial_stock", "serialStockSummary", "serial_stock_summary",
+    "payments", "payables", "shipments"
+  )) {
     $Property = $Data.PSObject.Properties[$Key]
     if ($null -ne $Property -and $null -ne $Property.Value) {
       $Rows = ConvertTo-ArraySafe -Value $Property.Value
@@ -264,12 +288,12 @@ function Convert-CrmSqlProductRows {
     $Sku = Get-ObjectValue -Object $Row -Names @("sku", "article", "internalCode", "internal_code", "code", "productCode", "product_code") -Default $Id
     $Barcode = Get-ObjectValue -Object $Row -Names @("barcode", "barCode", "ean") -Default ""
     $Price = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("latestPrice", "latest_price", "price", "salePrice", "sale_price", "minPrice", "min_price", "maxPrice", "max_price") -Default 0)
-    $TotalQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("totalQuantity", "total_quantity", "quantity", "qty", "balance") -Default 0)
-    $AvailableQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("availableQuantity", "available_quantity", "freeQuantity", "free_quantity") -Default $TotalQty)
+    $TotalQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("totalQuantity", "total_quantity", "serialQuantity", "serial_quantity", "quantity", "qty", "balance") -Default 0)
+    $AvailableQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("availableQuantity", "available_quantity", "availableQty", "available_qty", "freeQuantity", "free_quantity", "serialQuantity", "serial_quantity") -Default $TotalQty)
     $OneCRef = Get-ObjectValue -Object $Row -Names @("oneCRef", "one_c_ref", "externalId", "external_id", "productCode", "product_code") -Default $Id
     $Description = Get-ObjectValue -Object $Row -Names @("description", "comment", "notes") -Default ""
-    $Category = Get-ObjectValue -Object $Row -Names @("category", "categoryName", "category_name", "group", "groupName", "group_name") -Default ""
-    $ProductGroupCode = Get-ObjectValue -Object $Row -Names @("productGroupCode", "product_group_code", "categoryId", "category_id") -Default ""
+    $Category = Get-ObjectValue -Object $Row -Names @("category", "categoryName", "category_name", "categoryPrimary", "category_primary", "categorySecondary", "category_secondary", "group", "groupName", "group_name", "folderLevel1", "folder_level_1", "folderLevel2", "folder_level_2") -Default ""
+    $ProductGroupCode = Get-ObjectValue -Object $Row -Names @("productGroupCode", "product_group_code", "categoryId", "category_id", "productGroupCodePath", "product_group_code_path", "folderCode", "folder_code") -Default ""
     $ProductGroupRef = Get-ObjectValue -Object $Row -Names @("productGroupRef", "product_group_ref") -Default ""
     $Unit = Get-ObjectValue -Object $Row -Names @("unit", "unitName", "unit_name") -Default ""
     $Currency = Get-ObjectValue -Object $Row -Names @("latestPriceCurrency", "latest_price_currency", "currency") -Default "UAH"
@@ -361,8 +385,8 @@ function Convert-CrmSqlStockFromProducts {
   $Result = @()
   foreach ($Row in (ConvertTo-ArraySafe -Value $Rows)) {
     $ProductId = Get-ObjectValue -Object $Row -Names @("id", "oneCRef", "one_c_ref", "externalId", "sku", "barcode") -Default ""
-    $TotalQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("totalQuantity", "total_quantity", "quantity", "qty", "balance") -Default 0)
-    $AvailableQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("availableQuantity", "available_quantity", "freeQuantity", "free_quantity") -Default $TotalQty)
+    $TotalQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("totalQuantity", "total_quantity", "serialQuantity", "serial_quantity", "quantity", "qty", "balance") -Default 0)
+    $AvailableQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("availableQuantity", "available_quantity", "availableQty", "available_qty", "freeQuantity", "free_quantity", "serialQuantity", "serial_quantity") -Default $TotalQty)
     if ($TotalQty -eq 0 -and $AvailableQty -eq 0) {
       continue
     }
@@ -396,8 +420,8 @@ function Convert-CrmSqlStockRows {
     $Sku = Get-ObjectValue -Object $Row -Names @("sku", "article", "internalCode", "internal_code", "productCode", "product_code", "code") -Default $ProductId
     $WarehouseId = Get-ObjectValue -Object $Row -Names @("warehouseId", "warehouse_id", "warehouseCode", "warehouse_code", "warehouseRef", "warehouse_ref") -Default "sql-total"
     $Warehouse = Get-ObjectValue -Object $Row -Names @("warehouse", "warehouseName", "warehouse_name", "stockName", "stock_name") -Default "SQL total stock"
-    $Qty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("qty", "quantity", "totalQuantity", "total_quantity", "balance") -Default 0)
-    $AvailableQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("availableQty", "available_qty", "availableQuantity", "available_quantity", "freeQuantity", "free_quantity") -Default $Qty)
+    $Qty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("qty", "quantity", "totalQuantity", "total_quantity", "serialQuantity", "serial_quantity", "balance") -Default 0)
+    $AvailableQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("availableQty", "available_qty", "availableQuantity", "available_quantity", "freeQuantity", "free_quantity", "serialQuantity", "serial_quantity") -Default $Qty)
     $ReservedQty = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("reservedQty", "reserved_qty", "reservedQuantity", "reserved_quantity") -Default ([Math]::Max(0, $Qty - $AvailableQty)))
     $FirmId = Get-ObjectValue -Object $Row -Names @("firmId", "firm_id", "organizationId", "organization_id") -Default "sql-main"
     $ProductName = Get-ObjectValue -Object $Row -Names @("productName", "product_name", "product", "name", "title", "model", "fullName", "full_name", "entityName", "entity_name", "nomenclature", "nomenclatureName", "nomenclature_name", "itemName", "item_name", "goodsName", "goods_name", "description") -Default ""
@@ -474,7 +498,7 @@ function Convert-CrmSqlReceivableRows {
   $Result = @()
   foreach ($Row in (ConvertTo-ArraySafe -Value $Rows)) {
     $ClientId = Get-ObjectValue -Object $Row -Names @("clientId", "client_id", "customerId", "customer_id", "counterpartyId", "counterparty_id", "counterpartyCode", "counterparty_code", "id") -Default ""
-    $Amount = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("amount", "debt", "receivable", "debit", "balance") -Default 0)
+    $Amount = ConvertTo-CrmSqlNumber -Value (Get-ObjectValue -Object $Row -Names @("amount", "amountAbs", "amount_abs", "debt", "receivable", "debit", "balance") -Default 0)
     $AmountAbs = [Math]::Abs($Amount)
     $DefaultBalanceSign = if ($Amount -lt 0) { "negative" } else { "positive" }
     $BalanceSign = Get-ObjectValue -Object $Row -Names @("balanceSign", "balance_sign") -Default $DefaultBalanceSign
@@ -1053,7 +1077,11 @@ function New-CrmRequestLogContext {
       path = $Request.path
       query = $Request.query
       headers = $Request.headers
-      body = ConvertTo-LoggedTextBody -Text $Request.body -ContentType ($Request.headers["Content-Type"] -as [string])
+      body = if ($Request.path -eq "/api/config/credentials") {
+        [ordered]@{ redacted = $true; reason = "credential_update" }
+      } else {
+        ConvertTo-LoggedTextBody -Text $Request.body -ContentType ($Request.headers["Content-Type"] -as [string])
+      }
     }
   }
 }
@@ -1964,12 +1992,23 @@ function Invoke-NovaPoshtaDiagnostics {
   $Checks = New-Object System.Collections.ArrayList
   $ApiKeyConfigured = -not [string]::IsNullOrWhiteSpace((Get-NovaPoshtaApiKey))
   $WindowDays = Get-NovaPoshtaHistoryWindowDays -QueryString $QueryString
-  $SampleTo = (Get-Date).Date
-  $SampleFrom = $SampleTo.AddDays(-1 * ($WindowDays - 1))
-  $SampleFromText = $SampleFrom.ToString("dd.MM.yyyy")
-  $SampleToText = $SampleTo.ToString("dd.MM.yyyy")
+  $TodayDate = (Get-Date).Date
+  $HistoryFromText = ConvertTo-NovaPoshtaApiDate -Value (Get-NovaPoshtaHistoryFrom -QueryString $QueryString)
+  $HistoryStartDate = [datetime]::ParseExact($HistoryFromText, "dd.MM.yyyy", [Globalization.CultureInfo]::InvariantCulture)
+  if ($HistoryStartDate -gt $TodayDate) {
+    $HistoryStartDate = $TodayDate
+  }
+  $RecentFromDate = $TodayDate.AddDays(-1 * ($WindowDays - 1))
+  if ($RecentFromDate -lt $HistoryStartDate) {
+    $RecentFromDate = $HistoryStartDate
+  }
+  $SampleFromText = $RecentFromDate.ToString("dd.MM.yyyy")
+  $SampleToText = $TodayDate.ToString("dd.MM.yyyy")
+  $SampleWindows = New-Object System.Collections.ArrayList
   $CounterpartiesCount = 0
   $SampleDocumentsCount = 0
+  $DocumentProbeFailures = 0
+  $DiagnosticsThrottleMs = Get-NovaPoshtaThrottleMs
 
   if (-not $ApiKeyConfigured) {
     [void]$Warnings.Add("NP_DIAGNOSTICS_NO_KEY: NOVA_POSHTA_API_KEY is not configured in .env.")
@@ -1991,6 +2030,8 @@ function Invoke-NovaPoshtaDiagnostics {
         counterpartiesCount = 0
         sampleDocumentsCount = 0
         samplePeriod = [ordered]@{ from = $SampleFromText; to = $SampleToText }
+        sampleWindows = @()
+        historyFrom = $HistoryFromText
       }
     }
   }
@@ -2013,28 +2054,67 @@ function Invoke-NovaPoshtaDiagnostics {
     [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_COUNTERPARTIES_FAILED"; ok = $false; error = $_.Exception.Message })
   }
 
-  try {
-    $DocumentResponse = Invoke-NovaPoshtaApi -ModelName "InternetDocument" -CalledMethod "getDocumentList" -MethodProperties ([ordered]@{
-      DateTimeFrom = $SampleFromText
-      DateTimeTo = $SampleToText
-      Page = "1"
-      Limit = "20"
-      GetFullList = "1"
-    })
-    if ([bool]$DocumentResponse.success) {
-      $SampleDocumentsCount = @($DocumentResponse.data).Count
-      [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_OK"; ok = $true; count = $SampleDocumentsCount; from = $SampleFromText; to = $SampleToText })
-      if ($SampleDocumentsCount -eq 0) {
-        [void]$Warnings.Add("NP_DOCUMENTS_EMPTY_FROM_CABINET: getDocumentList returned 0 rows for $SampleFromText..$SampleToText. Check cabinet/counterparty ownership for TTNs.")
+  $WindowStarts = New-Object System.Collections.ArrayList
+  [void]$WindowStarts.Add($HistoryStartDate)
+  $HistorySpanDays = [Math]::Max(0, ($TodayDate - $HistoryStartDate).Days)
+  if ($HistorySpanDays -gt ($WindowDays * 2)) {
+    [void]$WindowStarts.Add($HistoryStartDate.AddDays([Math]::Floor($HistorySpanDays / 2)))
+  }
+  [void]$WindowStarts.Add($RecentFromDate)
+
+  $SeenWindows = @{}
+  foreach ($WindowStartRaw in @($WindowStarts)) {
+    $WindowStart = ([datetime]$WindowStartRaw).Date
+    if ($WindowStart -lt $HistoryStartDate) { $WindowStart = $HistoryStartDate }
+    if ($WindowStart -gt $TodayDate) { $WindowStart = $TodayDate }
+    $WindowEnd = $WindowStart.AddDays($WindowDays - 1)
+    if ($WindowEnd -gt $TodayDate) { $WindowEnd = $TodayDate }
+    if ($WindowEnd -lt $WindowStart) { continue }
+
+    $WindowKey = $WindowStart.ToString("yyyy-MM-dd")
+    if ($SeenWindows.ContainsKey($WindowKey)) { continue }
+    $SeenWindows[$WindowKey] = $true
+
+    $WindowFromText = $WindowStart.ToString("dd.MM.yyyy")
+    $WindowToText = $WindowEnd.ToString("dd.MM.yyyy")
+    $WindowResult = [ordered]@{ from = $WindowFromText; to = $WindowToText; count = 0; ok = $true }
+
+    try {
+      $DocumentResponse = Invoke-NovaPoshtaApi -ModelName "InternetDocument" -CalledMethod "getDocumentList" -MethodProperties ([ordered]@{
+        DateTimeFrom = $WindowFromText
+        DateTimeTo = $WindowToText
+        Page = "1"
+        Limit = "20"
+        GetFullList = "1"
+      })
+      if ([bool]$DocumentResponse.success) {
+        $WindowCount = @($DocumentResponse.data).Count
+        $WindowResult.count = $WindowCount
+        $SampleDocumentsCount += $WindowCount
+        [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_OK"; ok = $true; count = $WindowCount; from = $WindowFromText; to = $WindowToText })
+      } else {
+        $DocumentProbeFailures += 1
+        $Message = if (@($DocumentResponse.errors).Count) { [string]@($DocumentResponse.errors)[0] } else { "Nova Poshta getDocumentList failed." }
+        $WindowResult.ok = $false
+        $WindowResult.error = $Message
+        [void]$Warnings.Add("NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED: $Message")
+        [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED"; ok = $false; error = $Message; from = $WindowFromText; to = $WindowToText })
       }
-    } else {
-      $Message = if (@($DocumentResponse.errors).Count) { [string]@($DocumentResponse.errors)[0] } else { "Nova Poshta getDocumentList failed." }
-      [void]$Warnings.Add("NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED: $Message")
-      [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED"; ok = $false; error = $Message; from = $SampleFromText; to = $SampleToText })
+    } catch {
+      $DocumentProbeFailures += 1
+      $WindowResult.ok = $false
+      $WindowResult.error = $_.Exception.Message
+      [void]$Warnings.Add("NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED: $($_.Exception.Message)")
+      [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED"; ok = $false; error = $_.Exception.Message; from = $WindowFromText; to = $WindowToText })
     }
-  } catch {
-    [void]$Warnings.Add("NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED: $($_.Exception.Message)")
-    [void]$Checks.Add([ordered]@{ code = "NP_DIAGNOSTICS_DOCUMENT_LIST_FAILED"; ok = $false; error = $_.Exception.Message; from = $SampleFromText; to = $SampleToText })
+    [void]$SampleWindows.Add($WindowResult)
+    if ($DiagnosticsThrottleMs -gt 0) {
+      Start-Sleep -Milliseconds $DiagnosticsThrottleMs
+    }
+  }
+
+  if ($SampleWindows.Count -gt 0 -and $DocumentProbeFailures -eq 0 -and $SampleDocumentsCount -eq 0) {
+    [void]$Warnings.Add("NP_DOCUMENTS_EMPTY_FROM_CABINET: getDocumentList returned 0 rows across $($SampleWindows.Count) all-history diagnostic windows from $HistoryFromText to $SampleToText. Check cabinet/counterparty ownership for TTNs.")
   }
 
   $WarningCodes = @($Warnings | ForEach-Object {
@@ -2060,7 +2140,10 @@ function Invoke-NovaPoshtaDiagnostics {
       counterpartiesCount = $CounterpartiesCount
       sampleDocumentsCount = $SampleDocumentsCount
       samplePeriod = [ordered]@{ from = $SampleFromText; to = $SampleToText }
-      adviceCode = if ($SampleDocumentsCount -eq 0) { "NP_DOCUMENTS_EMPTY_FROM_CABINET" } else { "" }
+      sampleWindows = @($SampleWindows)
+      documentProbeFailures = $DocumentProbeFailures
+      historyFrom = $HistoryFromText
+      adviceCode = if ($DocumentProbeFailures -eq 0 -and $SampleDocumentsCount -eq 0) { "NP_DOCUMENTS_EMPTY_FROM_CABINET" } else { "" }
     }
   }
 }
@@ -2240,6 +2323,53 @@ function Resolve-NovaPayPath {
   return [System.IO.Path]::GetFullPath((Join-Path $Root $Path))
 }
 
+function Test-NovaPayCertificateText {
+  param([string]$Value)
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $false
+  }
+  return ($Value -match "-----BEGIN [^-]+-----" -or $Value -match "-----END [^-]+-----")
+}
+
+function Resolve-NovaPayCertificatePath {
+  param([string]$Path)
+  if (
+    [string]::IsNullOrWhiteSpace($Path) -or
+    (Test-NovaPayCertificateText -Value $Path) -or
+    $Path.Length -gt 240 -or
+    $Path -match "[`r`n]"
+  ) {
+    throw "NPAY_CERTIFICATE_PATH_INVALID: NOVAPAY_CERTIFICATE_PATH must be a short server-side file path. Paste certificate text into NOVAPAY_CERTIFICATE_CONTENT."
+  }
+  return Resolve-NovaPayPath -Path $Path
+}
+
+function Get-NovaPayUploadedCertificatePath {
+  $EnvPath = Get-MarketplaceCrmEnvPath
+  $EnvDirectory = Split-Path -Parent $EnvPath
+  if ([string]::IsNullOrWhiteSpace($EnvDirectory)) {
+    $EnvDirectory = Join-Path $Root "config"
+  }
+  return Join-Path (Join-Path $EnvDirectory "certificates") "novapay-public-certificate.pem"
+}
+
+function Save-NovaPayCertificateContent {
+  param([string]$Certificate)
+  $CertificateText = "$Certificate".Trim()
+  if ([string]::IsNullOrWhiteSpace($CertificateText) -or -not (Test-NovaPayCertificateText -Value $CertificateText)) {
+    $ErrorRecord = New-Object System.Exception("NovaPay certificate content does not look like PEM text.")
+    $ErrorRecord.Data["Code"] = "NOVAPAY_CERTIFICATE_CONTENT_INVALID"
+    throw $ErrorRecord
+  }
+  $CertificatePath = Get-NovaPayUploadedCertificatePath
+  $Directory = Split-Path -Parent $CertificatePath
+  if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+  }
+  [System.IO.File]::WriteAllText($CertificatePath, "$CertificateText`n", [System.Text.Encoding]::ASCII)
+  return $CertificatePath
+}
+
 function Get-NovaPayPublicCertificate {
   if (-not [string]::IsNullOrWhiteSpace($env:NOVAPAY_PUBLIC_CERTIFICATE)) {
     return "$($env:NOVAPAY_PUBLIC_CERTIFICATE)"
@@ -2247,7 +2377,11 @@ function Get-NovaPayPublicCertificate {
   if ([string]::IsNullOrWhiteSpace($env:NOVAPAY_CERTIFICATE_PATH)) {
     return ""
   }
-  $CertificatePath = Resolve-NovaPayPath -Path $env:NOVAPAY_CERTIFICATE_PATH
+  try {
+    $CertificatePath = Resolve-NovaPayCertificatePath -Path $env:NOVAPAY_CERTIFICATE_PATH
+  } catch {
+    return ""
+  }
   if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
     return ""
   }
@@ -2263,7 +2397,11 @@ function Set-NovaPayEnvFileValue {
   if ([string]::IsNullOrWhiteSpace($Key) -or [string]::IsNullOrWhiteSpace($Value)) {
     return
   }
-  $EnvPath = Join-Path $Root ".env"
+  $EnvPath = Get-MarketplaceCrmEnvPath
+  $EnvDirectory = Split-Path -Parent $EnvPath
+  if (-not [string]::IsNullOrWhiteSpace($EnvDirectory) -and -not (Test-Path -LiteralPath $EnvDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $EnvDirectory | Out-Null
+  }
   $Lines = New-Object "System.Collections.Generic.List[string]"
   if (Test-Path -LiteralPath $EnvPath -PathType Leaf) {
     $Lines.AddRange([string[]][System.IO.File]::ReadAllLines($EnvPath))
@@ -2287,13 +2425,133 @@ function Set-NovaPayEnvFileValue {
   [Environment]::SetEnvironmentVariable($Key, $Value, "Process")
 }
 
+function Get-CredentialProviderKeys {
+  param([string]$Provider)
+
+  switch ($Provider) {
+    "rozetka" { return @("ROZETKA_API_TOKEN", "ROZETKA_USERNAME", "ROZETKA_PASSWORD") }
+    "novaPay" {
+      return @(
+        "NOVAPAY_GATEWAY_URL",
+        "NOVAPAY_GATEWAY_TOKEN",
+        "NOVAPAY_GATEWAY_TOKEN_HEADER",
+        "NOVAPAY_BUSINESS_LOGIN",
+        "NOVAPAY_REFRESH_TOKEN",
+        "NOVAPAY_CERTIFICATE_PATH",
+        "NOVAPAY_CERTIFICATE_CONTENT",
+        "NOVAPAY_CLIENT_ID",
+        "NOVAPAY_ACCOUNT_ID",
+        "NOVAPAY_ACCOUNT_IBAN"
+      )
+    }
+    "novaPoshta" { return @("NOVA_POSHTA_API_KEY") }
+    default { return @() }
+  }
+}
+
+function Test-CrmEnvConfigured {
+  param([string]$Key)
+  return -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Key, "Process"))
+}
+
+function Get-CredentialProviderStatus {
+  param([string]$Provider)
+
+  switch ($Provider) {
+    "rozetka" {
+      $Token = Test-CrmEnvConfigured -Key "ROZETKA_API_TOKEN"
+      $Username = Test-CrmEnvConfigured -Key "ROZETKA_USERNAME"
+      $Password = Test-CrmEnvConfigured -Key "ROZETKA_PASSWORD"
+      return [ordered]@{
+        tokenConfigured = $Token
+        usernameConfigured = $Username
+        passwordConfigured = $Password
+        configured = ($Token -or ($Username -and $Password))
+      }
+    }
+    "novaPay" {
+      $GatewayUrl = Test-CrmEnvConfigured -Key "NOVAPAY_GATEWAY_URL"
+      $BusinessLogin = Test-CrmEnvConfigured -Key "NOVAPAY_BUSINESS_LOGIN"
+      $RefreshToken = Test-CrmEnvConfigured -Key "NOVAPAY_REFRESH_TOKEN"
+      $CertificatePath = Test-CrmEnvConfigured -Key "NOVAPAY_CERTIFICATE_PATH"
+      return [ordered]@{
+        gatewayUrlConfigured = $GatewayUrl
+        gatewayTokenConfigured = Test-CrmEnvConfigured -Key "NOVAPAY_GATEWAY_TOKEN"
+        businessLoginConfigured = $BusinessLogin
+        refreshTokenConfigured = $RefreshToken
+        certificatePathConfigured = $CertificatePath
+        clientIdConfigured = Test-CrmEnvConfigured -Key "NOVAPAY_CLIENT_ID"
+        accountIdConfigured = Test-CrmEnvConfigured -Key "NOVAPAY_ACCOUNT_ID"
+        accountIbanConfigured = Test-CrmEnvConfigured -Key "NOVAPAY_ACCOUNT_IBAN"
+        directConfigured = ($BusinessLogin -and $RefreshToken -and $CertificatePath)
+        configured = ($GatewayUrl -or ($BusinessLogin -and $RefreshToken -and $CertificatePath))
+      }
+    }
+    "novaPoshta" {
+      $ApiKey = Test-CrmEnvConfigured -Key "NOVA_POSHTA_API_KEY"
+      return [ordered]@{
+        apiKeyConfigured = $ApiKey
+        configured = $ApiKey
+      }
+    }
+    default { return [ordered]@{} }
+  }
+}
+
+function Update-CrmCredentialConfig {
+  param($Payload)
+
+  $Provider = "$($Payload.provider)".Trim()
+  $AllowedKeys = @(Get-CredentialProviderKeys -Provider $Provider)
+  if ($AllowedKeys.Count -eq 0) {
+    $ErrorRecord = New-Object System.Exception("Unknown credential provider.")
+    $ErrorRecord.Data["Code"] = "CREDENTIAL_PROVIDER_UNKNOWN"
+    throw $ErrorRecord
+  }
+
+  $Source = if ($Payload.values -and $Payload.values -is [object]) { $Payload.values } else { $Payload }
+  $UpdatedKeys = New-Object System.Collections.ArrayList
+  foreach ($Key in $AllowedKeys) {
+    $Property = $Source.PSObject.Properties[$Key]
+    if (-not $Property) { continue }
+    $Value = "$($Property.Value)".Trim()
+    if ([string]::IsNullOrWhiteSpace($Value)) { continue }
+    if ($Key -eq "NOVAPAY_CERTIFICATE_CONTENT") {
+      $CertificatePath = Save-NovaPayCertificateContent -Certificate $Value
+      Set-NovaPayEnvFileValue -Key "NOVAPAY_CERTIFICATE_PATH" -Value $CertificatePath
+      [void]$UpdatedKeys.Add("NOVAPAY_CERTIFICATE_PATH")
+      continue
+    }
+    if ($Key -eq "NOVAPAY_CERTIFICATE_PATH") {
+      [void](Resolve-NovaPayCertificatePath -Path $Value)
+    }
+    Set-NovaPayEnvFileValue -Key $Key -Value $Value
+    [void]$UpdatedKeys.Add($Key)
+  }
+
+  if ($UpdatedKeys.Count -eq 0) {
+    $ErrorRecord = New-Object System.Exception("No credential values were provided.")
+    $ErrorRecord.Data["Code"] = "CREDENTIAL_VALUES_EMPTY"
+    throw $ErrorRecord
+  }
+
+  return [ordered]@{
+    ok = $true
+    provider = $Provider
+    updatedKeys = @($UpdatedKeys)
+    status = Get-CredentialProviderStatus -Provider $Provider
+    persisted = $true
+    runtimeUpdated = $true
+  }
+}
+
 function Set-NovaPayCertificateFile {
   param([string]$Certificate)
 
   if ([string]::IsNullOrWhiteSpace($Certificate) -or [string]::IsNullOrWhiteSpace($env:NOVAPAY_CERTIFICATE_PATH)) {
     return
   }
-  $CertificatePath = Resolve-NovaPayPath -Path $env:NOVAPAY_CERTIFICATE_PATH
+  $CertificatePath = Resolve-NovaPayCertificatePath -Path $env:NOVAPAY_CERTIFICATE_PATH
   $Directory = Split-Path -Parent $CertificatePath
   if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
     New-Item -ItemType Directory -Force -Path $Directory | Out-Null
@@ -3277,6 +3535,18 @@ function Invoke-NovaPayRegisterDownload {
   }
 }
 
+function Get-NovaPayWarningCodeFromText {
+  param(
+    [string]$Text,
+    [string]$Default = "NPAY_GATEWAY_WARNING"
+  )
+
+  if ("$Text" -match "(NPAY_[A-Z0-9_]+)") {
+    return $Matches[1]
+  }
+  return $Default
+}
+
 function Invoke-NovaPayRegisterPeriod {
   param(
     [string]$Jwt,
@@ -3342,9 +3612,11 @@ function Invoke-NovaPayRegisterPeriod {
       $Stat.rows = $ParsedRows.Count
       $Stat.ok = $true
     } catch {
-      $Stat.error = $_.Exception.Message
+      $ErrorText = $_.Exception.Message
+      $Stat.error = $ErrorText
       if ($null -ne $Warnings) {
-        [void]$Warnings.Add("NPAY_REGISTER_PERIOD_FAILED ${DateFrom}..${DateTo} type ${Type}: $($_.Exception.Message)")
+        $WarningCode = Get-NovaPayWarningCodeFromText -Text $ErrorText -Default "NPAY_REGISTER_PERIOD_FAILED"
+        [void]$Warnings.Add("${WarningCode}: register period ${DateFrom}..${DateTo} type ${Type} failed. $ErrorText")
       }
     }
     [void]$Stats.Add($Stat)
@@ -4055,6 +4327,81 @@ function Handle-Client {
     return
   }
 
+  if ($Path -eq "/api/novapay/auth-check") {
+    if (Test-NovaPayGatewayConfigured) {
+      Send-Json -Client $Client -Value @{
+        ok = $true
+        source = "NovaPay external gateway diagnostics"
+        generatedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        authenticated = $false
+        authMode = "externalGateway"
+        diagnostics = Get-NovaPayDirectCredentialStatus
+      }
+      return
+    }
+    if (Test-NovaPayDirectConfigured) {
+      try {
+        $Auth = Invoke-NovaPayJwtAuthentication
+        Send-Json -Client $Client -Value @{
+          ok = $true
+          source = "NovaPay Business SOAP gateway"
+          generatedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+          authenticated = $true
+          authMode = "UserAuthenticationJWT"
+          jwtReceived = -not [string]::IsNullOrWhiteSpace($Auth.jwt)
+          expiration = $Auth.expiration
+          refreshTokenRotated = [bool]$Auth.refreshTokenRotated
+          diagnostics = Get-NovaPayDirectCredentialStatus
+        }
+      }
+      catch {
+        $ErrorCode = "NPAY_DIRECT_AUTH_CHECK_FAILED"
+        $Message = "$($_.Exception.Message)"
+        if ($Message -match "^(NPAY_[A-Z0-9_]+):") {
+          $ErrorCode = $Matches[1]
+        }
+        Send-Json -Client $Client -StatusCode 502 -Value @{
+          ok = $false
+          errorCode = $ErrorCode
+          error = $Message
+          source = "NovaPay Business SOAP gateway"
+          authenticated = $false
+          authMode = "UserAuthenticationJWT"
+          diagnostics = Get-NovaPayDirectCredentialStatus
+        }
+      }
+      return
+    }
+    Send-Json -Client $Client -StatusCode 503 -Value @{
+      ok = $false
+      errorCode = "NPAY_DIRECT_GATEWAY_NOT_CONFIGURED"
+      error = "NovaPay direct gateway is not configured. Set NOVAPAY_BUSINESS_LOGIN, NOVAPAY_REFRESH_TOKEN and NOVAPAY_CERTIFICATE_PATH in .env, or set NOVAPAY_GATEWAY_URL to an external gateway."
+      source = "NovaPay server diagnostics"
+      authenticated = $false
+      diagnostics = Get-NovaPayDirectCredentialStatus
+    }
+    return
+  }
+
+  if ($Path -eq "/api/config/credentials" -and $Request.method -eq "POST") {
+    try {
+      $Payload = if ([string]::IsNullOrWhiteSpace($Request.body)) { @{} } else { $Request.body | ConvertFrom-Json }
+      Send-Json -Client $Client -Value (Update-CrmCredentialConfig -Payload $Payload)
+    }
+    catch {
+      $Code = "CREDENTIAL_UPDATE_FAILED"
+      if ($_.Exception.Data.Contains("Code")) {
+        $Code = "$($_.Exception.Data["Code"])"
+      }
+      Send-Json -Client $Client -StatusCode 400 -Value @{
+        ok = $false
+        code = $Code
+        error = $_.Exception.Message
+      }
+    }
+    return
+  }
+
   if ($Path -eq "/api/rozetka/requirements") {
     Send-Json -Client $Client -Value @{ ok = $true; configured = (Test-RozetkaCredentials); content = $RozetkaRequirements }
     return
@@ -4301,7 +4648,7 @@ function Handle-Client {
   Send-Static -Client $Client -RelativePath $Path
 }
 
-$Listener = [System.Net.Sockets.TcpListener]::new($Address, $Port)
+$Listener = New-Object -TypeName System.Net.Sockets.TcpListener -ArgumentList $Address, $Port
 
 try {
   $Listener.Start()

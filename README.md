@@ -1,5 +1,14 @@
 # Marketplace CRM
 
+## Mandatory Project Logic
+
+```text
+This repo is one autonomous block in an Odoo-like modular CRM.
+It must interact with the main PostgreSQL/SQL core for shared data and exchange.
+Every chat created for this repo must obey D:\Codex\CRM\AGENTS.md, this repo's AGENTS.md, and D:\Codex\CRM\docs\PROJECT_SHARED_RULES.md before doing project work.
+Every chat and block builder must read and update D:\Codex\CRM\docs\PROJECT_SHARED_KNOWLEDGE_BASE.md for durable cross-block facts.
+```
+
 Ця версія CRM працює з маркетплейсами та B2B контуром. Перші екрани ведуть оператора через публікації, імпорт товарів, імпорт замовлень, статуси, ТТН, оплати, аналітику, B2B заявки, відповідальне зберігання й кабінети клієнтів.
 
 У навігації активні модулі: `Панель`, `Продажі`, `B2B`, `Товари`, `Аналітика та звіти`, `Фінанси`, `Налаштування`.

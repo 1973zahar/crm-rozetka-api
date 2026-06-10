@@ -147,6 +147,16 @@ button:disabled {
   display: none;
 }
 
+button[data-refresh-exchange-source]:disabled,
+button[data-run-marketplace-sync]:disabled,
+button[data-toggle-marketplace-auto-sync]:disabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .app-shell {
   position: relative;
   display: grid;
@@ -2303,6 +2313,22 @@ button.danger,
   margin-bottom: 0;
 }
 
+.exchange-card-top-tools {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.exchange-card-top-actions {
+  justify-content: flex-end;
+}
+
+.exchange-card-top-actions .small {
+  max-width: 180px;
+  text-align: right;
+}
+
 .exchange-process-strip {
   display: grid;
   gap: 7px;
@@ -2387,6 +2413,13 @@ button.danger,
 
 .inline-actions .exchange-action-grid {
   flex: 1 1 100%;
+}
+
+.inline-actions .credential-panel,
+.inline-actions .credential-form {
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
 }
 
 .exchange-action-button {
@@ -2924,5 +2957,19 @@ button.danger,
 
   .split {
     display: grid;
+  }
+
+  .exchange-card-top-tools {
+    justify-items: start;
+    min-width: 0;
+  }
+
+  .exchange-card-top-actions {
+    justify-content: flex-start;
+  }
+
+  .exchange-card-top-actions .small {
+    max-width: none;
+    text-align: left;
   }
 }
